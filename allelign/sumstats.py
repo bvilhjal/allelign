@@ -248,6 +248,15 @@ def _build_colmap(header, overrides):
             else:
                 colmap.pop("beta", None)
                 colmap["or"] = lower.index("hm_odds_ratio")
+            # The submitted frequency counts the submitted effect allele, which
+            # harmonisation may have swapped: without its hm_ counterpart it
+            # would describe the other allele on those rows.
+            if ("hm_effect_allele_frequency" not in lower
+                    and colmap.get("eaf") is not None):
+                del colmap["eaf"]
+                layout["eaf_dropped"] = (
+                    "hm_ columns without hm_effect_allele_frequency; the "
+                    "submitted frequency may count the other allele")
             layout["gwas_catalog_harmonised"] = True
         else:
             for field in ("ea", "oa", "id", "chrom", "pos", "eaf"):

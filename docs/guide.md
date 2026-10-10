@@ -16,7 +16,7 @@
 | PLINK2 | `A1` is tested: the other allele is `OMITTED`, or row by row `ALT` where `A1 == REF`, else `REF` |
 | REGENIE | `GENPOS` is the position when there is no `BP`; `LOG10P` recovers SE |
 | BOLT | `BP` wins over `GENPOS` (genetic position) |
-| GWAS Catalog harmonised | when `hm_effect_allele` and `hm_other_allele` exist, the `hm_` columns are used as one set; harmonised alleles without `hm_beta`/`hm_odds_ratio` refuse |
+| GWAS Catalog harmonised | with `hm_beta` or `hm_odds_ratio`, the `hm_` columns are used as one set, and the submitted frequency is dropped if there is no `hm_effect_allele_frequency` (it may count the other allele); without a harmonised effect, the submitted columns are used |
 | PGC daner | `FRQ_U_<n>` (control frequency of A1) is the EAF when no EAF column exists |
 | Neale UKB | `variant` = `chr:pos:ref:alt`, effect on ALT |
 | FinnGen | `alt` is the effect allele, `af_alt` the EAF |
@@ -101,7 +101,8 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
   - weights are per allele count;
   - `hm_` columns are preferred, and `hm_inferOtherAllele` fills a missing other allele;
   - OR/HR weights are logged;
-  - non-additive rows are dropped.
+  - non-additive rows are dropped;
+  - `keep(id, position)` skips rows a reference cannot match, while the ratio check and the weight-mass denominator still read the whole file. `harmonize_weights` counts the skipped rows as unmatched.
 - **`write_pgs_scoring_file`** converts an ldpred3 table to a Catalog file with `effect_weight = WEIGHT/SD_REF`. The genome build is required, and `#sd_source` is `unspecified` when the table does not record it. For plink2 `--score`, strip the `#` lines first.
 
 ## 5. Deliberate differences from ldpred3

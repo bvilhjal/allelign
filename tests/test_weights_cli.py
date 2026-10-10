@@ -78,6 +78,49 @@ def test_read_scoring_file_rules(tmp_path):
     bad.write_text("#weight_type=OR\nrsID\teffect_allele\teffect_weight\nrs1\tA\t-1\n")
     with pytest.raises(ValueError, match="ratios"):
         read_scoring_file(bad)
+    assert str(sf) == "PGS000001: 2 variants, build GRCh38" and sf.trait == ""
+
+
+def test_scoring_prefilter_keeps_whole_file_checks(tmp_path):
+    path = tmp_path / "PGS000002.txt"
+    path.write_text(
+        "#pgs_id=PGS000002\n#trait_reported=Height\n#weight_type=beta\n"
+        "rsID\tchr_name\tchr_position\teffect_allele\tother_allele\teffect_weight\n"
+        "rs1\t1\t100\tA\tG\t0.3\nrs2\t1\t200\tC\tT\t-0.4\n"
+        "rs3\t1\t300\tA\tC\t0.5\nrs4\t1\t400\tG\tT\t0.1\n")
+    ref = Variants(chrom=np.array(["1", "1"], dtype=object),
+                   id=np.array(["rs1", "rs3"], dtype=object),
+                   pos=np.array([100, 300]),
+                   a1=np.array(["A", "C"], dtype=object),
+                   a2=np.array(["G", "A"], dtype=object))
+    known = set(ref.id)
+    full = read_scoring_file(path)
+    sub = read_scoring_file(path, keep=lambda rsid, pos: rsid in known)
+    assert list(sub.id) == ["rs1", "rs3"] and len(sub) == sub.log["n_kept"] == 2
+    np.testing.assert_array_equal(sub.weight, [0.3, 0.5])
+    assert sub.log["n_reference_prefiltered"] == 2
+    assert sub.log["weight_square_sum_all"] == pytest.approx(full.weight @ full.weight)
+    assert str(sub) == "PGS000002: 2 variants, Height"
+    hf, hs = harmonize_weights(full, ref), harmonize_weights(sub, ref)
+    np.testing.assert_array_equal(hf.var_index, hs.var_index)
+    np.testing.assert_array_equal(hf.weight, hs.weight)
+    for key in ("n_sumstats", "n_unmatched", "weight_mass_matched"):
+        assert hf.log[key] == pytest.approx(hs.log[key]), key
+    # The ratio check reads rejected rows too.
+    bad = tmp_path / "bad.txt"
+    bad.write_text("#weight_type=OR\nrsID\teffect_allele\teffect_weight\n"
+                   "rs1\tA\t1.2\nrs9\tA\t-1\n")
+    with pytest.raises(ValueError, match="non-positive"):
+        read_scoring_file(bad, keep=lambda rsid, pos: rsid == "rs1")
+
+
+def test_variant_indices_is_the_cached_harmonize_index():
+    from allelign import variant_indices
+    ref = Variants(chrom=np.array(["1"], dtype=object), id=np.array(["rs1"], dtype=object),
+                   pos=np.array([100]), a1=np.array(["A"], dtype=object),
+                   a2=np.array(["G"], dtype=object)).freeze()
+    first = variant_indices(ref)
+    assert first[1]["rs1"] == [0] and variant_indices(ref)[1] is first[1]
 
 
 def test_harmonize_weights_flips_frequencies():

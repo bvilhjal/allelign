@@ -4,7 +4,16 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
-### Added
+### Added (0.1.0.dev2)
+
+- `read_scoring_file(keep=...)` prefilters rows a reference cannot match, as multipgs's private `_reference_filter` did. `harmonize_weights` takes the weight mass over the whole file and counts the skipped rows as unmatched. `ScoringFile` gains `trait` and `__str__`, and `scoring_file_id` is public: multipgs now reads PGS Catalog files through allelign.
+- Public `variant_indices`, the identifier index `harmonize` caches per table, for callers that look up identifiers against a reference.
+
+### Fixed (0.1.0.dev2)
+
+- A GWAS Catalog file read through its `hm_` columns without `hm_effect_allele_frequency` no longer pairs the submitted frequency with the harmonised alleles. The frequency is dropped and `parse_log["layout"]["eaf_dropped"]` says why.
+
+### Added (0.1.0.dev1)
 
 - First version, extracted from ldpred3 0.9.x with pieces of multipgs and bipred:
   - summary-statistics reader with the alias table, OR-to-beta, SE from p, and the optional Numba block parser;
@@ -32,6 +41,7 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 - ldpred3 0.9.9 imports allelign for reading, harmonisation, QC, weights and the split-half screen.
 - ppb 0.0.1.dev10 takes its chromosome, reverse-complement and strand-ambiguity rules from `allelign.alleles`.
+- bipred, gwfm, multipgs and SMARTpred (from 0.1.0.dev2) import reading, alignment, QC and weight-file I/O directly; multipgs's PGS Catalog reader is allelign's.
 
 ### Fixed (relative to the ldpred3 originals)
 

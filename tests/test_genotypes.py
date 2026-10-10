@@ -193,5 +193,5 @@ def test_bed_sample_selection_by_iid_index_or_mask(tmp_path):
     np.testing.assert_array_equal(bed.read(), G[[0, 8]])
     with pytest.warns(RuntimeWarning, match="1 requested samples"):
         Bed(prefix, samples=["i1", "nobody"])
-    with pytest.raises(ValueError, match="keeps no samples"):
+    with pytest.warns(RuntimeWarning), pytest.raises(ValueError, match="keeps no samples"):
         Bed(prefix, samples=["nobody"])

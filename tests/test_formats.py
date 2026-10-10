@@ -94,6 +94,17 @@ def test_gwas_catalog_harmonised_uses_the_hm_set(tmp_path, jit):
     np.testing.assert_allclose(ss.beta, [-0.1])
     np.testing.assert_allclose(ss.eaf, [0.2])
     assert ss.parse_log["layout"]["gwas_catalog_harmonised"] is True
+    # Without the harmonised frequency the submitted one may count the
+    # submitted (here swapped) effect allele: it is dropped, not misread.
+    no_hm_eaf = _write(tmp_path,
+                       "chromosome\tbase_pair_location\teffect_allele\tother_allele\t"
+                       "effect_allele_frequency\tbeta\tstandard_error\tn\thm_rsid\t"
+                       "hm_pos\thm_effect_allele\thm_other_allele\thm_beta\n"
+                       "1\t752721\tG\tA\t0.8\t0.1\t0.01\t900\trs3131972\t817341\t"
+                       "A\tG\t-0.1\n", name="no_hm_eaf.tsv")
+    ss = read_sumstats(no_hm_eaf)
+    assert list(ss.ea) == ["A"] and np.isnan(ss.eaf[0])
+    assert "eaf_dropped" in ss.parse_log["layout"]
 
 
 def test_harmonised_alleles_without_harmonised_effect_use_the_submitted_set(tmp_path):

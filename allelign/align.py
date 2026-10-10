@@ -46,8 +46,8 @@ from .alleles import (allele_orientation as _allele_orientation,
 __all__ = ["Harmonized", "harmonize", "diagnose_match", "reference_coverage",
            "coverage_message", "reanchor_on_identifier", "HarmonizedWeights",
            "harmonize_weights", "count_positional_only_matches",
-           "REFERENCE_COVERAGE_WARN", "SEVERE_REFERENCE_COVERAGE",
-           "BUILD_MISMATCH_FRACTION"]
+           "variant_indices", "REFERENCE_COVERAGE_WARN",
+           "SEVERE_REFERENCE_COVERAGE", "BUILD_MISMATCH_FRACTION"]
 
 # Per-table matching indices, reused across calls on a frozen table: rebuilding
 # the O(variants) dicts per file dominated runs that align many files to one
@@ -193,6 +193,17 @@ def _coordinate_candidates(candidates, variants, chrom, pos, memo,
         if candidate_pos == pos and candidate_norm == query_norm:
             hits.append(gi)
     return hits or None
+
+
+def variant_indices(variants):
+    """``[key, by_id, by_pos, upper, chrom_memo, vector]`` for one table.
+
+    The matching indices :func:`harmonize` builds once per frozen table and
+    reuses; ``by_id`` maps an identifier to its row(s). Callers that look up
+    many identifiers against a reference can borrow it instead of building
+    their own (a 1.4M-variant dict costs about 0.6 GiB).
+    """
+    return _variant_indices(variants)
 
 
 def _variant_indices(variants):
@@ -1198,7 +1209,8 @@ def harmonize_weights(weights, variants, *, drop_ambiguous=True, status=None):
     ``ea``/``oa`` (:class:`~allelign.weights.ScoringFile`); ``af_ref`` and
     ``sd_ref`` are carried along when present. The same rules as
     :func:`harmonize` apply. The log adds ``weight_mass_matched``, the share
-    of the total squared weight that matched.
+    of the total squared weight that matched (over the whole file when the
+    score was read with a ``keep=`` prefilter).
     """
     ea = getattr(weights, "a1", None)
     oa = getattr(weights, "a2", None)
@@ -1222,8 +1234,17 @@ def harmonize_weights(weights, variants, *, drop_ambiguous=True, status=None):
         af_aligned = np.where(h.flipped, 1.0 - af, af)
     if sd is not None:
         sd_aligned = np.asarray(sd, dtype=float)[h.src_index]
-    total = float(w @ w)
+    # A score read with read_scoring_file(keep=...) lacks the rows the
+    # prefilter rejected: they count as unmatched, and the weight mass is
+    # taken over the whole file.
+    parse_log = getattr(weights, "log", None) or {}
+    removed = int(parse_log.get("n_reference_prefiltered", 0))
+    total = parse_log.get("weight_square_sum_all")
+    total = float(w @ w) if total is None else float(total)
     log = dict(h.log)
+    if removed:
+        log["n_sumstats"] += removed
+        log["n_unmatched"] += removed
     log["weight_mass_matched"] = (float(h.beta @ h.beta) / total
                                   if total > 0 else float("nan"))
     return HarmonizedWeights(var_index=h.var_index, weight=h.beta,

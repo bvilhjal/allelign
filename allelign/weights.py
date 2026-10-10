@@ -299,15 +299,26 @@ class ScoringFile:
 
     @property
     def pgs_id(self):
-        return self.meta.get("pgs_id") or _scoring_file_id(self.path)
+        """``pgs_id`` from the header, falling back to the file name."""
+        return self.meta.get("pgs_id") or scoring_file_id(self.path)
+
+    @property
+    def trait(self):
+        return self.meta.get("trait_reported", "")
 
     @property
     def genome_build(self):
         """Build of the coordinates actually used (the harmonised build if any)."""
         return self.log.get("build_used") or self.meta.get("genome_build", "")
 
+    def __str__(self):
+        return (f"{self.pgs_id}: {len(self)} variants"
+                + (f", {self.trait}" if self.trait else "")
+                + (f", build {self.genome_build}" if self.genome_build else ""))
 
-def _scoring_file_id(path):
+
+def scoring_file_id(path):
+    """``PGS000123`` from ``.../PGS000123_hmPOS_GRCh37.txt.gz``."""
     base = os.path.basename(str(path))
     for suffix in (".txt.gz", ".tsv.gz", ".txt", ".tsv", ".gz"):
         if base.endswith(suffix):
@@ -342,7 +353,8 @@ def _scoring_rows(fh, meta):
         yield line.split(delimiter)
 
 
-def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True):
+def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
+                      keep=None):
     """Parse a PGS Catalog scoring file (plain or gzipped).
 
     * ``hm_rsID``/``hm_chr``/``hm_pos`` are used when present (they are on
@@ -353,13 +365,19 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True):
     * Dominant, recessive, haplotype, diplotype and interaction rows cannot be
       represented by an additive dosage score; they are dropped and counted
       (``drop_non_additive=False`` keeps them, which is wrong for every one).
+
+    ``keep(id, position) -> bool`` prefilters rows a reference cannot match,
+    so a genome-wide file aligned to a small panel never stores their strings.
+    Rejected rows still count in the whole-file checks: the ratio test and
+    ``log["weight_square_sum_all"]``, the denominator of the matched weight
+    mass. ``log["n_reference_prefiltered"]`` counts them.
     """
     meta = {}
     with open_text(path) as fh:
         rows = _scoring_rows(fh, meta)
         header = next(rows, None)
         if header is None:
-            raise ValueError(f"{path}: no column header found")
+            raise ValueError(f"{path}: no column header found (only comment lines)")
         idx, used = {}, {}
         for field_name, names in _SCORING_COLUMNS.items():
             candidates = names if prefer_harmonized else \
@@ -373,13 +391,13 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True):
         if idx["ea"] is None:
             raise ValueError(f"{path}: no effect_allele column in {header}")
         if idx["id"] is None and (idx["chrom"] is None or idx["pos"] is None):
-            raise ValueError(f"{path}: needs an rsID column or both chromosome "
-                             f"and position, found {header}")
+            raise ValueError(f"{path}: needs either an rsID column or both "
+                             f"chromosome and position, found {header}")
         flag_cols = [i for i, name in enumerate(header)
                      if name.strip().lower() in _NON_ADDITIVE]
         n_read = n_flagged = n_bad_weight = n_inferred_oa = 0
         ids, chroms, eas, oas = [], [], [], []
-        poss, ws = array("q"), array("d")
+        poss, ws, retained = array("q"), array("d"), array("q")
         width = len(header)
         for fields in rows:
             n_read += 1
@@ -410,6 +428,13 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True):
                     oa = inferred
                     n_inferred_oa += 1
             ws.append(w)
+            # Numeric weights are kept for every valid row, so the ratio test
+            # and the weight-mass total read the whole file; only the costly
+            # strings of rejected rows are skipped.
+            if keep is not None:
+                if not keep(sid, position):
+                    continue
+                retained.append(len(ws) - 1)
             ids.append(sid)
             chroms.append(fields[idx["chrom"]].strip()
                           if idx["chrom"] is not None else "")
@@ -445,10 +470,15 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True):
         if np.any(weight <= 0):
             raise ValueError(
                 f"{path}: weight_type={weight_type!r} says these are ratios, "
-                f"but {int(np.sum(weight <= 0))} are non-positive. Fix the "
-                "header or the file.")
+                f"but {int(np.sum(weight <= 0))} are non-positive, so they "
+                "cannot be. Fix the header or the file.")
         weight = np.log(weight)
         log["log_transformed"] = True
+    if keep is not None:
+        log["n_reference_prefiltered"] = int(weight.size - len(retained))
+        log["weight_square_sum_all"] = float(weight @ weight)
+        weight = weight[np.frombuffer(retained, dtype=np.int64)]
+        log["n_kept"] = int(weight.size)
     return ScoringFile(
         id=np.array(ids, dtype=object), chrom=np.array(chroms, dtype=object),
         pos=pos, ea=np.array(eas, dtype=object),

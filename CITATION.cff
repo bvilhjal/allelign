@@ -5,6 +5,6 @@ title: allelign
 authors:
   - family-names: "Vilhjálmsson"
     given-names: "Bjarni"
-version: "0.1.0.dev1"
+version: "0.1.0.dev2"
 repository-code: "https://github.com/bvilhjal/allelign"
 license: MIT

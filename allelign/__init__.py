@@ -7,7 +7,7 @@ number. NumPy-only; Numba and SciPy speed up the parser and the LD screen when
 installed.
 """
 
-__version__ = "0.1.0.dev1"
+__version__ = "0.1.0.dev2"
 
 from .alleles import (allele_orientation, is_ambiguous, normalize_chrom,
                       reverse_complement)
@@ -16,7 +16,8 @@ from .genotypes import Bed, ld_consistency_screen_genotypes
 from .align import (Harmonized, HarmonizedWeights,
                     count_positional_only_matches, coverage_message,
                     diagnose_match, harmonize, harmonize_weights,
-                    reanchor_on_identifier, reference_coverage)
+                    reanchor_on_identifier, reference_coverage,
+                    variant_indices)
 from .ldcheck import (chromosome_blocks, dense_blocks, dentist_statistic,
                       ld_consistency_screen_selected,
                       ld_blocks_from_genotypes, ld_consistency_screen,
@@ -32,7 +33,8 @@ from .sumstats import (ColumnMappingError, Sumstats, anchor_n_eff,
                        read_sumstats, rescale_n_eff, write_sumstats)
 from .variants import Variants, read_bim, read_pvar, read_variants
 from .weights import (ScoringFile, WeightsTable, read_scoring_file,
-                      read_weights, write_pgs_scoring_file, write_weights)
+                      read_weights, scoring_file_id, write_pgs_scoring_file,
+                      write_weights)
 
 __all__ = [
     "__version__",
@@ -42,11 +44,11 @@ __all__ = [
     "rescale_n_eff", "anchor_n_eff",
     "Variants", "read_bim", "read_pvar", "read_variants", "Bed",
     "WeightsTable", "read_weights", "write_weights", "ScoringFile",
-    "read_scoring_file", "write_pgs_scoring_file",
+    "read_scoring_file", "scoring_file_id", "write_pgs_scoring_file",
     # alignment
     "Harmonized", "harmonize", "HarmonizedWeights", "harmonize_weights",
     "reanchor_on_identifier", "reference_coverage", "coverage_message",
-    "diagnose_match", "count_positional_only_matches",
+    "diagnose_match", "count_positional_only_matches", "variant_indices",
     "normalize_chrom", "reverse_complement", "is_ambiguous",
     "allele_orientation", "normalize_build", "check_build",
     "BuildMismatchError",
