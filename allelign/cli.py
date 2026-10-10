@@ -1,4 +1,8 @@
-"""Command-line interface: ``allelign inspect | clean | align | pgs-export``."""
+"""Command-line interface: ``allelign inspect | clean | align | pgs-export``.
+
+``align --ld-screen`` adds the LD-consistency screen, with LD computed from the
+reference fileset's own genotypes (``.bed``/``.fam`` beside the ``.bim``).
+"""
 
 from __future__ import annotations
 
@@ -110,15 +114,20 @@ def cmd_align(args):
     message = coverage_message(coverage, label=str(args.sumstats))
     if message:
         print(f"allelign: {message}", file=sys.stderr)
+    passed = np.ones(len(h), dtype=bool)
+    if args.ld_screen:
+        passed, log["ld_screen"] = _ld_screen(args, ref, h)
+        status[rows[h.src_index[~passed]]] = _st.LD_INCONSISTENT
+    vi, src = h.var_index[passed], h.src_index[passed]
     aligned = Sumstats(
-        id=np.asarray(ref.id, dtype=object)[h.var_index],
-        chrom=np.asarray(ref.chrom, dtype=object)[h.var_index],
-        pos=np.asarray(ref.pos, dtype=np.int64)[h.var_index],
-        ea=np.asarray(ref.a1, dtype=object)[h.var_index],
-        oa=np.asarray(ref.a2, dtype=object)[h.var_index],
-        beta=h.beta, se=h.se, n_eff=h.n_eff,
-        eaf=gwas_af_on_counted_allele(sub.eaf, h.src_index, h.flipped),
-        info=np.asarray(sub.info, dtype=float)[h.src_index])
+        id=np.asarray(ref.id, dtype=object)[vi],
+        chrom=np.asarray(ref.chrom, dtype=object)[vi],
+        pos=np.asarray(ref.pos, dtype=np.int64)[vi],
+        ea=np.asarray(ref.a1, dtype=object)[vi],
+        oa=np.asarray(ref.a2, dtype=object)[vi],
+        beta=h.beta[passed], se=h.se[passed], n_eff=h.n_eff[passed],
+        eaf=gwas_af_on_counted_allele(sub.eaf, src, h.flipped[passed]),
+        info=np.asarray(sub.info, dtype=float)[src])
     aligned.write(args.out)
     if args.status_out:
         _write_status(args.status_out, ss, status)
@@ -126,9 +135,30 @@ def cmd_align(args):
     else:
         log["status_before_harmonize"] = _st.status_counts(status)
     _write_log(args.out, log)
-    print(f"allelign: aligned {len(h):,} of {len(ss):,} rows to "
+    print(f"allelign: aligned {len(aligned):,} of {len(ss):,} rows to "
           f"{len(ref):,} reference variants -> {args.out}", file=sys.stderr)
     return 0
+
+
+def _ld_screen(args, ref, h):
+    """Keep-mask over the aligned rows, and its log, from the reference genotypes."""
+    from .genotypes import (Bed, ld_consistency_screen_genotypes,
+                            read_sample_list)
+    if not str(args.reference).endswith(".bim"):
+        raise ValueError("--ld-screen needs a PLINK 1 --reference (.bim with "
+                         ".bed and .fam beside it)")
+    samples = read_sample_list(args.ld_keep) if args.ld_keep else None
+    bed = Bed(args.reference, variants=ref, samples=samples)
+    options = {"rounds": args.ld_rounds, "threshold": args.ld_threshold}
+    keep, stats = ld_consistency_screen_genotypes(
+        bed, h.var_index, h.beta / h.se, max_block=args.ld_block_size,
+        seed=args.seed, return_stats=True, **options)
+    stats.update(options, n_reference_samples=bed.n_samples,
+                 max_block=args.ld_block_size, seed=args.seed)
+    print(f"allelign: LD screen dropped {stats['n_dropped']:,} of "
+          f"{stats['n_tested']:,} tested variants ({bed.n_samples:,} "
+          "reference samples)", file=sys.stderr)
+    return keep, stats
 
 
 def cmd_pgs_export(args):
@@ -161,6 +191,11 @@ def _add_qc_options(p):
                    help="per-input-row status table (TSV, .gz accepted)")
 
 
+def _ld_default(name):
+    from . import ldcheck
+    return getattr(ldcheck, name)
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="allelign",
@@ -190,6 +225,23 @@ def build_parser():
                    help="take coordinates from the reference's rsIDs")
     p.add_argument("--sumstats-build", default=None)
     p.add_argument("--reference-build", default=None)
+    g = p.add_argument_group(
+        "LD-consistency screen",
+        "drop variants whose z-score disagrees with its neighbours' given the "
+        "reference LD. A reference of a few hundred samples flags more "
+        "variants than one of thousands; see docs/guide.md.")
+    g.add_argument("--ld-screen", action="store_true",
+                   help="screen with LD from the --reference .bed")
+    g.add_argument("--ld-keep", default=None, metavar="FILE",
+                   help="reference samples to use for LD (FID IID or IID per "
+                        "line), e.g. the one ancestry matching the GWAS")
+    g.add_argument("--ld-block-size", type=int, default=2000,
+                   help="maximum variants per LD block (default 2000)")
+    g.add_argument("--ld-rounds", type=int, default=_ld_default("DEFAULT_ROUNDS"))
+    g.add_argument("--ld-threshold", type=float,
+                   default=_ld_default("DEFAULT_THRESHOLD"),
+                   help="chi-square cut for an outlier")
+    g.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_align)
 
     p = sub.add_parser("pgs-export",

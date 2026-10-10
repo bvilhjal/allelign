@@ -7,16 +7,18 @@ number. NumPy-only; Numba and SciPy speed up the parser and the LD screen when
 installed.
 """
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0.dev1"
 
 from .alleles import (allele_orientation, is_ambiguous, normalize_chrom,
                       reverse_complement)
 from .build import BuildMismatchError, check_build, normalize_build
+from .genotypes import Bed, ld_consistency_screen_genotypes
 from .align import (Harmonized, HarmonizedWeights,
                     count_positional_only_matches, coverage_message,
                     diagnose_match, harmonize, harmonize_weights,
                     reanchor_on_identifier, reference_coverage)
 from .ldcheck import (chromosome_blocks, dense_blocks, dentist_statistic,
+                      ld_consistency_screen_selected,
                       ld_blocks_from_genotypes, ld_consistency_screen,
                       loo_statistic)
 from .qc import (af_concordance_mask, genomic_control_factor,
@@ -38,7 +40,7 @@ __all__ = [
     "Sumstats", "read_sumstats", "write_sumstats", "detect_columns",
     "inspect_columns", "ColumnMappingError", "n_eff_case_control",
     "rescale_n_eff", "anchor_n_eff",
-    "Variants", "read_bim", "read_pvar", "read_variants",
+    "Variants", "read_bim", "read_pvar", "read_variants", "Bed",
     "WeightsTable", "read_weights", "write_weights", "ScoringFile",
     "read_scoring_file", "write_pgs_scoring_file",
     # alignment
@@ -52,9 +54,10 @@ __all__ = [
     "qc_sumstats", "sd_consistency_mask", "af_concordance_mask",
     "gwas_af_on_counted_allele", "should_impute_n", "impute_n_eff",
     "genomic_control_factor", "implied_sample_size", "genomic_inflation",
-    "in_long_range_ld", "ld_consistency_screen", "dentist_statistic",
+    "in_long_range_ld", "ld_consistency_screen",
+    "ld_consistency_screen_selected", "dentist_statistic",
     "loo_statistic", "ld_blocks_from_genotypes", "dense_blocks",
-    "chromosome_blocks",
+    "chromosome_blocks", "ld_consistency_screen_genotypes",
     # per-variant status
     "QC_REASON_NAMES", "new_status", "status_counts", "write_status_table",
 ]

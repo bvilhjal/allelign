@@ -86,13 +86,13 @@ The screen takes LD as `[(R, idx), …]` blocks partitioning the variants. `R` c
 - low-rank (`U`, `residual_diag`, `scale`);
 - any object with a `window(rows)` method.
 
-`ld_blocks_from_genotypes` and `chromosome_blocks` build blocks from reference genotypes.
+`ld_blocks_from_genotypes` and `chromosome_blocks` build blocks from a genotype matrix in memory. For a PLINK reference, `ld_consistency_screen_genotypes(Bed(...), var_index, z)` reads one block of genotypes at a time, forms its LD, screens it and releases it. `Bed(..., samples=...)` restricts LD to one ancestry of a mixed panel. Each block's random splits come from a stream fixed by `(seed, block number)`. The CLI exposes this as `allelign align --ld-screen [--ld-keep FILE]`; dropped rows get the `dentist_outlier` status.
 
 **How it works.** Each window is split at random into halves. Each half predicts the other through the LD (DENTIST's statistic, Chen et al. 2021). A flag is confirmed by the full-window leave-one-out statistic. The variant is dropped only if it has an LD neighbour and is not a private effect consistent with `R`.
 
 **Limits.** It is not the complete published DENTIST procedure, so validate the mask for your study. A drop rate of several percent usually means the LD is not the matrix the GWAS was drawn against.
 
-Reference size matters. The null calibration assumes LD sampling noise is small relative to the z-scores' precision. On chr22 of Yengo 2022 EUR height (N about 1.6M), aligned to 1000G with LD from its 503 EUR samples, the screen dropped 1,300 of 14,582 variants (9%). That mostly measures the small reference, not bad statistics. With a very large GWAS, use a reference of comparable quality (for example UK Biobank LD), or read the mask as a diagnostic.
+Reference size matters. The null calibration assumes LD sampling noise is small relative to the z-scores' precision. On chr22 of Yengo 2022 EUR height (N about 1.6M), aligned to 1000G with LD from its 503 EUR samples, the screen dropped 1,300 of 14,582 variants (9%); the CLI path gives the same count (8 s, 0.57 GB). That mostly measures the small reference, not bad statistics. With a very large GWAS, use a reference of comparable quality (for example UK Biobank LD), or read the mask as a diagnostic.
 
 ## 4. PGS effect sizes
 
@@ -105,6 +105,8 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
 - **`write_pgs_scoring_file`** converts an ldpred3 table to a Catalog file with `effect_weight = WEIGHT/SD_REF`. The genome build is required, and `#sd_source` is `unspecified` when the table does not record it. For plink2 `--score`, strip the `#` lines first.
 
 ## 5. Deliberate differences from ldpred3
+
+ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 too. They are listed against ldpred3 0.9.8, the last release with its own reader.
 
 - Case and control count columns give effective N when no explicit effective-N column exists. ldpred3 would use a total-N column.
 - New aliases sit after ldpred3's in every list, so files ldpred3 maps are mapped identically. Files ldpred3 could not map (PLINK2 with REF/ALT, REGENIE, Neale, `hm_` sets) now map.

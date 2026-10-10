@@ -23,6 +23,15 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
   - PGC `FRQ_U_*` as the effect-allele frequency;
   - Neale `chr:pos:ref:alt` variant strings.
 - `.bim`/`.pvar` readers, `harmonize_weights` (aligns frequencies and reports matched weight mass), `genomic_inflation`, LD blocks from reference genotypes, and a CLI (`inspect`, `clean`, `align`, `pgs-export`).
+- `Bed`, a NumPy-only PLINK 1 `.bed` reader. It reads selected variants with coalesced seeks and can restrict to some samples (IIDs, indices or a mask).
+- `ld_consistency_screen_genotypes` screens with LD formed block by block from a `.bed`, so a genome-wide reference never holds more than one block of LD. It is also available as `allelign align --ld-screen [--ld-keep FILE]`.
+- Hooks ldpred3 uses to consume the screen: `ld_consistency_screen_selected` (screen a sparse selection without materialising it), `ncores` block pooling, `stats_out`, and a private eigensolver hook.
+- CI (lint; py3.9 with numpy 1.20 and no Numba; py3.12 with Numba).
+
+### Consumers
+
+- ldpred3 0.9.9 imports allelign for reading, harmonisation, QC, weights and the split-half screen.
+- ppb 0.0.1.dev10 takes its chromosome, reverse-complement and strand-ambiguity rules from `allelign.alleles`.
 
 ### Fixed (relative to the ldpred3 originals)
 

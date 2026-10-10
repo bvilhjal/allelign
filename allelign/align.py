@@ -836,29 +836,45 @@ def _diagnose_unmatched(sumstats, variants, harmonized):
 
 
 def reference_coverage(sumstats, variants, harmonized, *, n_reference=None):
-    """How much of the reference the aligned rows cover, and why not more.
+    """How much of the LD reference the aligned rows cover, and why not more.
 
-    Returns a dict with ``frac_of_reference``, ``frac_of_sumstats`` and a
-    ``reason`` from a fixed vocabulary -- ``adequate_coverage``,
-    ``no_rows_offered``, ``build_mismatch``, ``absent_identifiers``,
-    ``rows_rejected_at_matched_locus``, ``sparse_sumstats`` -- plus the
-    unmatched-row breakdown when it looked (``diagnosed``).
+    Zero overlap is an error a caller catches elsewhere. What this reports is
+    the case that still produces numbers: a fit running on a small,
+    unrepresentative corner of the reference. Returns a dict with the two
+    fractions and a ``reason`` from a fixed vocabulary --
+    ``adequate_coverage``, ``no_rows_offered``, ``build_mismatch``,
+    ``absent_identifiers``, ``rows_rejected_at_matched_locus``,
+    ``sparse_sumstats`` -- plus the unmatched-row breakdown when it looked.
+
+    Preparation uses the same report and adds validity, QC and re-anchoring
+    counts, so CLI and web runs diagnose a thin alignment consistently.
     """
+    return _reference_coverage(sumstats, variants, harmonized,
+                               n_reference=n_reference)
+
+
+def _reference_coverage(sumstats, variants, harmonized, *, n_reference=None,
+                        n_matched=None, n_offered=None, n_invalid=0,
+                        n_qc_dropped=0):
+    """Shared coverage classification, including preparation's row filters."""
     n_rows = int(len(sumstats.id))
     n_cache = int(len(variants.id) if n_reference is None else n_reference)
-    n_matched = int(len(harmonized))
+    n_matched = int(len(harmonized) if n_matched is None else n_matched)
+    n_offered = int(n_rows if n_offered is None else n_offered)
     out = {
-        "n_sumstats_offered": n_rows,
+        "n_sumstats_offered": n_offered,
         "n_cache": n_cache,
         "n_matched": n_matched,
         "frac_of_reference": (n_matched / n_cache) if n_cache else 0.0,
-        "frac_of_sumstats": (n_matched / n_rows) if n_rows else 0.0,
+        "frac_of_sumstats": (n_matched / n_offered) if n_offered else 0.0,
         "diagnosed": False,
     }
     if out["frac_of_reference"] >= REFERENCE_COVERAGE_WARN:
         out["reason"] = "adequate_coverage"
         return out
     if n_rows == 0:
+        # Nothing reached harmonization, so the reference says nothing about
+        # why. Naming the build here would be a guess.
         out["reason"] = "no_rows_offered"
         return out
     diagnosis = _diagnose_unmatched(sumstats, variants, harmonized)
@@ -871,6 +887,8 @@ def reference_coverage(sumstats, variants, harmonized, *, n_reference=None):
     out["build_mismatch_suspected"] = build_mismatch
     out["severe"] = out["frac_of_reference"] < SEVERE_REFERENCE_COVERAGE
     out["reason"] = (
+        "rows_failed_validity" if n_invalid and n_invalid >= max(n_matched, 1) else
+        "qc_removed_rows" if n_qc_dropped and n_qc_dropped >= max(n_matched, 1) else
         "build_mismatch" if build_mismatch else
         "absent_identifiers" if absent and absent >= elsewhere else
         "rows_rejected_at_matched_locus" if n_unmatched else
@@ -878,51 +896,91 @@ def reference_coverage(sumstats, variants, harmonized, *, n_reference=None):
     return out
 
 
-def coverage_message(coverage, *, label="sumstats"):
-    """One paragraph naming the coverage, the cause and the remedy, or ``None``."""
+def coverage_message(coverage, *, label="sumstats", n_invalid=0,
+                     n_harmonized=0, n_qc_dropped=0):
+    """One paragraph naming the coverage, the cause, and the remedy.
+
+    Kept beside the thresholds it describes; the pipeline's alignment
+    warnings use it.
+    """
     reason = coverage.get("reason")
     if reason in (None, "adequate_coverage"):
         return None
+    if reason == "reanchor_dropped_all":
+        return (
+            f"{label}: identifier re-anchoring dropped every one of "
+            f"{coverage['n_sumstats_offered']:,} rows against the LD reference "
+            f"({coverage['n_dropped_absent_identifier']:,} identifiers the reference "
+            f"does not hold, {coverage['n_dropped_ambiguous_locus']:,} held at "
+            "several loci). This is not a QC filter failure: the reference "
+            "was consulted and none of the offered identifiers could be "
+            "re-stamped onto it.")
     if reason == "no_rows_offered":
-        return (f"{label}: no rows reached alignment, so no variant could "
-                "match. Check the QC filters against the file's columns -- a "
-                "missing or unparsed sample-size, frequency or standard-error "
-                "column removes every row -- before suspecting the reference.")
+        return (f"{label}: QC removed every row before alignment to the LD "
+                "reference, so no variant could match. Check the QC filters "
+                "against the file's columns -- a missing or unparsed "
+                "sample-size, allele-frequency, or standard-error column "
+                "removes every row -- before suspecting the reference.")
     lines = [
         f"{label}: only {coverage['n_matched']:,} of {coverage['n_cache']:,} "
-        f"reference variants are covered ({coverage['frac_of_reference']:.1%}), "
-        f"from {coverage['n_sumstats_offered']:,} rows offered."]
+        f"LD-reference variants are covered "
+        f"({coverage['frac_of_reference']:.1%}), from "
+        f"{coverage['n_sumstats_offered']:,} rows offered to harmonisation."]
     if coverage.get("severe"):
-        lines.append("This few variants is not a genome-wide analysis of that "
-                     "reference.")
+        lines.append(
+            "A fit on this few reference variants is not a genome-wide "
+            "analysis of that reference: the LD blocks are nearly empty, the "
+            "LD-consistency screen leaves most windows below its minimum "
+            "size, and LDSC keeps the full reference M, so h2 and "
+            "polygenicity are on a denominator the data do not populate.")
+    else:
+        lines.append(
+            "LDSC keeps the full reference M and the LD blocks stay sparse, "
+            "so h2, polygenicity, and screen coverage are all affected.")
     if reason == "build_mismatch" or coverage.get("build_mismatch_suspected"):
         lines.append(
             f"{coverage['n_unmatched_id_elsewhere']:,} of the "
-            f"{coverage['n_unmatched_rows']:,} unmatched rows carry an "
-            "identifier the reference holds at coordinates that disagree: the "
-            "signature of a genome-build mismatch (GRCh38 statistics against a "
-            "GRCh37 reference, or the reverse) or of CHR/BP read from the wrong "
-            "columns. Lift the statistics over (keeping the chain and failed "
-            "mappings), use a reference on the GWAS build, or re-anchor on "
-            "identifiers (reanchor_on_identifier). Do not drop coordinates to "
-            "force an identifier-only match.")
+            f"{coverage['n_unmatched_rows']:,} unmatched rows carry an identifier "
+            "the reference holds at coordinates that disagree. That is the "
+            "signature of a genome-build mismatch (GRCh38 summary statistics "
+            "against a GRCh37 reference, or the reverse) or of CHR/BP read "
+            "from the wrong columns. Check the column mapping; if the builds "
+            "differ, lift the summary statistics over to the reference's build "
+            "and keep the chain file and failed mappings with the results, "
+            "or use a reference on the GWAS build. Do not drop coordinates "
+            "to force an identifier-only match.")
         if coverage.get("examples"):
             lines.append("Examples: " + "; ".join(coverage["examples"]) + ".")
     elif reason == "absent_identifiers":
         lines.append(
             f"{coverage['n_unmatched_id_absent']:,} unmatched rows carry an "
             "identifier the reference does not hold at all, which points at a "
-            "different variant set or ancestry panel rather than coordinates.")
+            "different variant set or ancestry panel rather than at "
+            "coordinates.")
     elif reason == "rows_rejected_at_matched_locus":
         lines.append(
             "The unmatched rows are present in the reference at the same "
-            "locus, so they were rejected on alleles, duplication or a "
+            "locus, so they were rejected on alleles, duplication, or a "
             "non-finite effect; check the effect/other allele columns.")
+    elif reason == "rows_failed_validity":
+        lines.append(
+            f"{n_invalid:,} of the {n_harmonized:,} harmonized rows had a "
+            "non-finite or non-positive standard error or sample size and "
+            "were dropped after alignment. Check the SE and N columns -- a "
+            "mis-mapped or all-zero standard-error column is a common cause "
+            "-- before suspecting the deposition.")
+    elif reason == "qc_removed_rows":
+        lines.append(
+            f"Sumstats QC removed {n_qc_dropped:,} rows before alignment, so "
+            "only the survivors were offered to the reference. Relax the QC "
+            "filters (min_n_ratio, min_maf, min_info, max_chisq) if they are "
+            "tighter than intended, and check they point at the right columns.")
     else:
         lines.append(
             "Every offered row matched, so the GWAS itself covers only this "
-            "part of the reference -- a hits-only or array-restricted "
-            "deposition rather than a misalignment.")
+            "part of the reference -- a significant-hits-only or "
+            "array-restricted deposition rather than a misalignment. "
+            "Genome-wide estimands cannot be read off such a subset.")
     return " ".join(lines)
 
 
@@ -1010,7 +1068,8 @@ def count_positional_only_matches(sumstats, variants, harmonized):
 
 
 def reanchor_on_identifier(sumstats, variants, *, label="sumstats",
-                           warn=True, return_keep=False):
+                           warn=True, return_keep=False,
+                           warning_stacklevel=2):
     """Move each row onto the reference's own coordinates for its identifier.
 
     The coordinate repair for a build mismatch when identifiers are shared and
@@ -1067,23 +1126,28 @@ def reanchor_on_identifier(sumstats, variants, *, label="sumstats",
            "n_dropped_missing_identifier": int(n_missing_id)}
     anchored = replace(sumstats, chrom=chrom, pos=pos).subset(keep)
     n_dropped = n_absent + n_ambiguous + n_missing_id
+    # Warn on drops as well as moves: identifiers retired between builds can
+    # lose a large fraction with nothing moved.
     if warn and (n_moved or n_dropped):
         actions = []
         if n_moved:
             actions.append(
-                f"re-anchored {n_moved:,} of {n_rows:,} rows onto the "
-                "reference's coordinates for their identifiers")
+                f"re-anchored {n_moved:,} of {n_rows:,} rows onto the LD "
+                "reference's coordinates for their identifiers, because the "
+                "two sides disagreed on where those variants are")
         if n_dropped:
             actions.append(
                 f"dropped {n_dropped:,} of {n_rows:,} rows it could not anchor "
-                f"({n_absent:,} identifiers the reference does not hold, "
-                f"{n_ambiguous:,} held at several loci, {n_missing_id:,} with "
-                "no identifier)")
+                f"by identifier ({n_absent:,} identifiers the reference does "
+                f"not hold, {n_ambiguous:,} held at several loci, "
+                f"{n_missing_id:,} with no identifier at all)")
         warnings.warn(
             f"{label}: identifier-keyed re-anchoring: " + "; ".join(actions)
-            + ". Coordinates are now the reference's build, keyed on "
-            "identifier. This is not a chain-file liftover: record it.",
-            RuntimeWarning, stacklevel=2)
+            + ". The fit is therefore on the reference's genome build, keyed "
+            "on identifier rather than on position. This is not a chain-file "
+            "liftover: record it, and prefer a properly lifted-over input "
+            "where one is available.",
+            RuntimeWarning, stacklevel=warning_stacklevel)
     return (anchored, log, keep) if return_keep else (anchored, log)
 
 

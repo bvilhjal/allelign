@@ -96,13 +96,24 @@ def test_gwas_catalog_harmonised_uses_the_hm_set(tmp_path, jit):
     assert ss.parse_log["layout"]["gwas_catalog_harmonised"] is True
 
 
-def test_harmonised_alleles_without_harmonised_effect_refuse(tmp_path):
+def test_harmonised_alleles_without_harmonised_effect_use_the_submitted_set(tmp_path):
+    # The submitted beta counts the submitted effect allele; pairing it with
+    # the (possibly swapped) hm_ alleles would flip signs.
     path = _write(tmp_path,
-                  "hm_rsid\thm_effect_allele\thm_other_allele\tbeta\tse\tn\n"
-                  "rs1\tA\tG\t0.1\t0.01\t900\n")
-    with pytest.raises(ColumnMappingError, match="harmonised"):
-        read_sumstats(path)
-    assert read_sumstats(path, beta="beta").beta[0] == 0.1
+                  "rsid\tchromosome\tbase_pair_location\teffect_allele\t"
+                  "other_allele\tbeta\tse\tn\thm_rsid\thm_chrom\thm_pos\t"
+                  "hm_effect_allele\thm_other_allele\n"
+                  "rs1\t1\t752721\tG\tA\t0.1\t0.01\t900\trs1\t1\t817341\tA\tG\n")
+    ss = read_sumstats(path)
+    assert list(ss.ea) == ["G"] and list(ss.pos) == [752721]
+    assert ss.beta[0] == 0.1
+    assert "gwas_catalog_harmonised_ignored" in ss.parse_log["layout"]
+    only_hm = _write(tmp_path, "hm_rsid\thm_effect_allele\thm_other_allele\t"
+                     "beta\tse\tn\nrs1\tA\tG\t0.1\t0.01\t900\n", name="b.txt")
+    with pytest.raises(ValueError, match="allele column"):
+        read_sumstats(only_hm)
+    with pytest.raises(ColumnMappingError):
+        read_sumstats(only_hm, ea="nope")
 
 
 def test_daner_control_frequency_and_neff(tmp_path, jit):

@@ -356,3 +356,60 @@ def test_weights_and_pgs_export_match_ldpred3(tmp_path):
 
 def test_status_vocabulary_matches_ldpred3():
     assert A_st.QC_REASON_NAMES == L_st.QC_REASON_NAMES
+
+
+def test_selected_and_pooled_screens_match_ldpred3():
+    blocks, z = _screen_inputs(3)
+    rng = np.random.default_rng(3)
+    selection = np.sort(rng.choice(z.size, z.size - 90, replace=False))
+    from allelign.ldcheck import ld_consistency_screen_selected
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        sa, sb = {}, {}
+        a = ld_consistency_screen_selected(blocks, selection, z[selection],
+                                           seed=4, stats_out=sa)
+        b = L_qc._ld_consistency_screen_selected(blocks, selection,
+                                                 z[selection], seed=4,
+                                                 stats_out=sb)
+        np.testing.assert_array_equal(a, b)
+        assert sa == sb
+        np.testing.assert_array_equal(
+            ld_consistency_screen(blocks, z, seed=1, ncores=2),
+            L_qc.ld_consistency_screen(blocks, z, seed=1))
+
+
+def test_coverage_reports_and_reanchoring_match_ldpred3():
+    L_prep = importlib.import_module("ldpred3.prepare")
+    n = 300
+    ids = np.array([f"rs{i}" for i in range(n)], dtype=object)
+    cols = dict(chrom=np.full(n, "1", dtype=object), id=ids,
+                pos=(np.arange(n) + 1) * 10, a1=np.full(n, "A", dtype=object),
+                a2=np.full(n, "G", dtype=object))
+    ss = A_ss.Sumstats(id=ids.copy(), chrom=np.full(n, "1", dtype=object),
+                       pos=(np.arange(n) + 1) * 10 + 3,
+                       ea=np.full(n, "A", dtype=object),
+                       oa=np.full(n, "G", dtype=object),
+                       beta=np.full(n, 0.1), se=np.full(n, 0.01),
+                       n_eff=np.full(n, 1e4), eaf=np.full(n, np.nan),
+                       info=np.full(n, np.nan))
+    ss.id[:5] = ""
+    va, vb = Variants(**cols), Variants(**{k: v.copy() for k, v in cols.items()})
+    ha, hb = A_h.harmonize(ss, va), L_h.harmonize(ss, vb)
+    for kw in ({}, {"n_invalid": 400}, {"n_qc_dropped": 500}):
+        ca = A_h._reference_coverage(ss, va, ha, **kw)
+        cb = L_h._reference_coverage(ss, vb, hb, **kw)
+        assert ca == cb
+        assert A_h.coverage_message(ca, n_invalid=kw.get("n_invalid", 0)) == \
+            L_h.coverage_message(cb, n_invalid=kw.get("n_invalid", 0))
+    with warnings.catch_warnings(record=True) as wa:
+        warnings.simplefilter("always")
+        out_a, log_a, keep_a = A_h.reanchor_on_identifier(
+            ss, va, label="x", return_keep=True)
+    with warnings.catch_warnings(record=True) as wb:
+        warnings.simplefilter("always")
+        out_b, log_b, keep_b = L_prep._reanchor_on_identifier(
+            ss, vb, label="x", warning_stacklevel=2, return_keep=True)
+    assert log_a == log_b
+    np.testing.assert_array_equal(keep_a, keep_b)
+    np.testing.assert_array_equal(out_a.pos, out_b.pos)
+    assert [str(w.message) for w in wa] == [str(w.message) for w in wb]

@@ -214,3 +214,52 @@ def test_qc_status_is_the_first_failing_filter():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         qc_sumstats(ss)
+
+
+def test_selected_screen_equals_subsetting_first():
+    from allelign import ld_consistency_screen_selected
+    R1, z1, _ = _planted(11, m=300)
+    R2, z2, _ = _planted(12, m=200)
+    blocks = [(R1, np.arange(300)), (R2, np.arange(300, 500))]
+    rng = np.random.default_rng(0)
+    selection = np.sort(rng.choice(500, 380, replace=False))
+    z = np.concatenate([z1, z2])[selection]
+    sub_blocks, start = [], 0
+    for R, idx in blocks:
+        rows = selection[(selection >= idx[0]) & (selection <= idx[-1])] - idx[0]
+        if rows.size:
+            sub_blocks.append((R[np.ix_(rows, rows)],
+                               np.arange(start, start + rows.size)))
+            start += rows.size
+    events = []
+    keep = ld_consistency_screen_selected(blocks, selection, z, seed=5,
+                                          progress=events.append)
+    np.testing.assert_array_equal(keep, ld_consistency_screen(sub_blocks, z,
+                                                              seed=5))
+    assert [e["done"] for e in events] == [1, 2]
+    assert events[-1] == {"step": "LD consistency screen", "done": 2,
+                          "total": 2, "unit": "block"}
+    with pytest.raises(ValueError, match="strictly increasing"):
+        ld_consistency_screen_selected(blocks, selection[::-1], z)
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_pooled_screen_equals_serial_and_fills_stats_out():
+    blocks, zs = [], []
+    for b in range(4):
+        R, z, _ = _planted(20 + b, m=150)
+        blocks.append((R, np.arange(150 * b, 150 * (b + 1))))
+        zs.append(z)
+    z = np.concatenate(zs)
+    stats = {}
+    serial = ld_consistency_screen(blocks, z, seed=2, stats_out=stats)
+    pooled = ld_consistency_screen(blocks, z, seed=2, ncores=3)
+    np.testing.assert_array_equal(serial, pooled)
+    assert stats["n_tested"] == 600 and stats["n_dropped"] == (~serial).sum()
+    calls = []
+
+    def eigh(a):
+        calls.append(a.shape)
+        return np.linalg.eigh(a)
+    ld_consistency_screen(blocks, z, seed=2, _eigh=eigh)
+    assert calls                                   # the hook is used

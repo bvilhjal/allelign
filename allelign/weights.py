@@ -482,7 +482,8 @@ def _pgs_header_value(name, value):
         raise ValueError(f"{name} must not be empty")
     if any(ch in text for ch in "\t\n\r#="):
         raise ValueError(f"{name} must not contain tabs, newlines, '#' or '=' "
-                         f"(got {value!r})")
+                         f"(got {value!r}); it is embedded in a #key=value "
+                         "header line")
     return text
 
 

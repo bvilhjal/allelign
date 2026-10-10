@@ -25,14 +25,14 @@ ref = al.read_bim("reference.bim").freeze()           # or read_pvar, or al.Vari
 h = al.harmonize(ss.subset(keep), ref)                # beta now counts ref.a1
 print(al.coverage_message(al.reference_coverage(ss.subset(keep), ref, h)) or "coverage ok")
 
-# Checks against the reference panel: af_ref is the frequency of ref.a1,
-# genotypes the panel's (n_samples, n_variants) allele counts in ref order.
-idx = h.var_index
-sd_keep, sd_log, _ = al.sd_consistency_mask(h.beta, h.se, h.n_eff, af_ref[idx])
+# Checks against the reference panel (af_ref: frequency of ref.a1).
+sd_keep, sd_log, _ = al.sd_consistency_mask(h.beta, h.se, h.n_eff, af_ref[h.var_index])
 
-# LD consistency: z-scores their LD neighbours contradict.
-blocks = al.ld_blocks_from_genotypes(genotypes[:, idx], al.chromosome_blocks(ref.chrom[idx]))
-ld_keep = al.ld_consistency_screen(blocks, h.beta / h.se)
+# LD consistency: z-scores their LD neighbours contradict. LD comes from the
+# reference's genotypes, one block at a time; or pass your own [(R, idx), ...]
+# blocks to al.ld_consistency_screen.
+bed = al.Bed("reference.bed", variants=ref, samples=eur_iids)
+ld_keep = al.ld_consistency_screen_genotypes(bed, h.var_index, h.beta / h.se)
 
 # PGS effect sizes
 score = al.read_scoring_file("PGS000001_hmPOS_GRCh37.txt.gz")
@@ -47,6 +47,7 @@ Every filter can stamp a per-row status array (`al.new_status(len(ss))`, passed 
 allelign inspect gwas.tsv.gz
 allelign clean gwas.tsv.gz -o clean.tsv.gz --status-out status.tsv
 allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --sumstats-build GRCh38 --reference-build GRCh37 --reanchor-on-identifier
+allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --ld-screen --ld-keep eur_samples.txt --status-out status.tsv
 allelign pgs-export prs.weights.tsv -o PGS_my.txt --genome-build GRCh37
 ```
 
@@ -75,17 +76,17 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
   - SD consistency against reference frequencies.
   - Allele-frequency concordance, with a safety valve for ancestry mismatch.
   - Imputed per-variant N, the genomic-control undo, implied N, λGC and long-range LD regions.
-  - The split-half LD-consistency screen (DENTIST-style) with full-window confirmation, on dense, int8, low-rank or lazily provided LD.
+  - The split-half LD-consistency screen (DENTIST-style) with full-window confirmation, on dense, int8, low-rank or lazily provided LD, or on LD formed block by block from a PLINK `.bed` reference.
 - **Effect sizes.** ldpred3 weight tables, PGS Catalog reading and writing, and alignment of either to a reference.
 
 [docs/guide.md](docs/guide.md) has the rules, defaults and the deliberate differences from ldpred3.
 
-## Moving the family onto allelign
+## Consumers
 
-1. **ldpred3** imports allelign for reading, harmonisation, QC and weights, keeping thin compatibility wrappers. The parity tests are the gate. The pipeline-specific pieces stay in ldpred3 for now: whole-block DENTIST with low-rank Woodbury updates, pooled screening, and qc_log report blocks.
-2. **bipred, gwfm, multipgs and SMARTpred** switch their `ldpred3.sumstats`/`harmonize`/`qc` imports to allelign; multipgs drops its catalog reader.
-3. **ppb** keeps its own harmoniser for now. Three of its rules differ from ldpred3's on purpose (chromosome 25/XY, zero padding, self-complementary indels); reconciling them is a separate decision.
+- **ldpred3** (0.9.9) reads, aligns, QCs and writes weights through allelign. Its modules re-export allelign under their old names, so sibling imports keep working. It keeps the pipeline-specific parts: whole-block DENTIST with low-rank Woodbury updates, the BLAS gate for a pooled screen, its float32 eigensolver (passed to the screen), and the qc_log report blocks. allelign's parity tests are the contract.
+- **ppb** takes chromosome labels, reverse complements and strand ambiguity from `allelign.alleles` and keeps its own position-only join.
+- **Next:** bipred, gwfm, multipgs and SMARTpred can import allelign directly instead of `ldpred3.sumstats`/`harmonize`/`qc`, and multipgs can drop its catalog reader.
 
 ## Status
 
-Version 0.1.0.dev0. Not on PyPI. MIT licence.
+Version 0.1.0.dev1. Private, not on PyPI. MIT licence.

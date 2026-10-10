@@ -233,25 +233,29 @@ def _build_colmap(header, overrides):
         layout["saige"] = True
     # GWAS Catalog harmonised files carry the submitted columns and the
     # harmonised ``hm_`` columns side by side, possibly on different builds and
-    # with the effect allele swapped. Use the hm_ set consistently.
+    # with the effect allele swapped. Use one set consistently: the hm_ set
+    # when it has a harmonised effect, the submitted set otherwise.
     if "hm_effect_allele" in lower and "hm_other_allele" in lower:
-        for field, name in (("ea", "hm_effect_allele"),
-                            ("oa", "hm_other_allele"), ("id", "hm_rsid"),
-                            ("chrom", "hm_chrom"), ("pos", "hm_pos"),
-                            ("eaf", "hm_effect_allele_frequency")):
-            if name in lower:
-                colmap[field] = lower.index(name)
-        if "hm_beta" in lower:
-            colmap["beta"] = lower.index("hm_beta")
-        elif "hm_odds_ratio" in lower:
-            colmap.pop("beta", None)
-            colmap["or"] = lower.index("hm_odds_ratio")
-        elif not ({"beta", "or"} & set(overrides)):
-            raise ColumnMappingError(
-                "harmonised alleles (hm_effect_allele) without a harmonised "
-                "effect (hm_beta or hm_odds_ratio): the submitted effect may "
-                "count a different allele. Map beta= or or= explicitly.")
-        layout["gwas_catalog_harmonised"] = True
+        if "hm_beta" in lower or "hm_odds_ratio" in lower:
+            for field, name in (("ea", "hm_effect_allele"),
+                                ("oa", "hm_other_allele"), ("id", "hm_rsid"),
+                                ("chrom", "hm_chrom"), ("pos", "hm_pos"),
+                                ("eaf", "hm_effect_allele_frequency")):
+                if name in lower:
+                    colmap[field] = lower.index(name)
+            if "hm_beta" in lower:
+                colmap["beta"] = lower.index("hm_beta")
+            else:
+                colmap.pop("beta", None)
+                colmap["or"] = lower.index("hm_odds_ratio")
+            layout["gwas_catalog_harmonised"] = True
+        else:
+            for field in ("ea", "oa", "id", "chrom", "pos", "eaf"):
+                if (colmap.get(field) is not None
+                        and lower[colmap[field]].startswith("hm_")):
+                    del colmap[field]
+            layout["gwas_catalog_harmonised_ignored"] = (
+                "no hm_beta or hm_odds_ratio; the submitted columns are used")
     # PLINK2 --glm: A1 is the tested allele, which may be REF or ALT.
     if (colmap.get("ea") is not None and lower[colmap["ea"]] == "a1"
             and colmap.get("oa") is not None and lower[colmap["oa"]] == "ref"):

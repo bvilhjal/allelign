@@ -30,6 +30,7 @@ seed the mask is the same (serial path, SciPy present).
 
 from __future__ import annotations
 
+import functools
 import warnings
 
 import numpy as np
@@ -37,7 +38,8 @@ import numpy as np
 from ._common import finite_control, integer_at_least, validate_boolean, validate_seed
 from .warning_markers import LD_SCREEN_HIGH_DROP, LD_SCREEN_UNTESTED
 
-__all__ = ["ld_consistency_screen", "dentist_statistic", "loo_statistic",
+__all__ = ["ld_consistency_screen", "ld_consistency_screen_selected",
+           "dentist_statistic", "loo_statistic",
            "ld_blocks_from_genotypes", "dense_blocks", "chromosome_blocks",
            "DEFAULT_WINDOW", "MIN_WINDOW", "DEFAULT_THRESHOLD",
            "DEFAULT_ROUNDS"]
@@ -139,11 +141,12 @@ def _screen_eigh(a):
     return np.linalg.eigh(a)
 
 
-def _split_half_factor(ld, predictors, targets, eigenvalue_floor):
+def _split_half_factor(ld, predictors, targets, eigenvalue_floor,
+                       eigh=_screen_eigh):
     """The z-free part of the split-half statistic, or ``None`` if no rank."""
     within = ld[np.ix_(predictors, predictors)]
     across = ld[np.ix_(targets, predictors)]
-    values, vectors = _screen_eigh(within)
+    values, vectors = eigh(within)
     keep = values > eigenvalue_floor * max(float(values.max()), 1e-12)
     if not keep.any():
         return None
@@ -209,9 +212,15 @@ def _window_has_neighbor(ld, min_neighbor_r):
     return off.max(axis=1) >= min_neighbor_r
 
 
-def _precision_factor(ld, ridge, floor=DEFAULT_LOO_EIGENVALUE_FLOOR):
-    """``V``, ``1/(w+c)`` and ``Omega_jj`` for the full-window LOO statistic."""
-    w, V = _screen_eigh(np.asarray(ld, dtype=_WORK_DTYPE))
+def _precision_factor(ld, ridge, floor=DEFAULT_LOO_EIGENVALUE_FLOOR,
+                      eigh=_screen_eigh):
+    """``V``, ``1/(w+c)`` and ``Omega_jj`` for the full-window LOO statistic.
+
+    One eigendecomposition does the PSD repair and the inversion together:
+    ``c`` is the ridge raised until every eigenvalue clears ``floor``,
+    ``Omega = V diag(1/(w + c)) V'`` and ``Omega_jj = sum_k V_jk^2/(w_k + c)``.
+    """
+    w, V = eigh(np.asarray(ld, dtype=_WORK_DTYPE))
     shift = _ridge_for_floor(float(w.min()), float(ridge), float(floor))
     inv_w = _WORK_DTYPE(1.0) / (w + _WORK_DTYPE(shift))
     diag = (V * V) @ inv_w
@@ -247,15 +256,23 @@ def loo_statistic(ld, z, *, ridge=DEFAULT_LOO_RIDGE,
 def _confirmed_drops(ld, z, candidates, threshold, *,
                      min_neighbor_r=DEFAULT_MIN_NEIGHBOR_R,
                      ridge=DEFAULT_LOO_RIDGE,
-                     private_z_ratio=DEFAULT_PRIVATE_Z_RATIO, shared=None):
-    """Split-half flags that also fail the full-window LOO statistic."""
+                     private_z_ratio=DEFAULT_PRIVATE_Z_RATIO, shared=None,
+                     eigh=_screen_eigh):
+    """Split-half flags that also fail the full-window LOO statistic.
+
+    A large z whose ``|(Omega z)_j|`` is at most ``private_z_ratio |z_j|`` is a
+    private effect consistent with ``R``; if it is the window's largest
+    eligible residual, nothing in the window is dropped. Isolated variants
+    (no neighbour above ``min_neighbor_r``) are kept. ``shared`` memoises the
+    window's neighbour mask and precision factor across traits.
+    """
     if candidates.size == 0:
         return candidates
     if shared is None:
         shared = {}
     if not shared:
         shared["has_nbr"] = _window_has_neighbor(ld, min_neighbor_r)
-        shared["precision"] = _precision_factor(ld, ridge)
+        shared["precision"] = _precision_factor(ld, ridge, eigh=eigh)
     has_nbr = shared["has_nbr"]
     stat, tvec = _precision_apply(shared["precision"], z)
     private = np.abs(tvec) <= private_z_ratio * np.abs(z)
@@ -287,40 +304,53 @@ def _split_half_tiles(live, window):
 
 
 class _SplitHalfWindows:
-    """One block's window LD and confirmation memo, kept across rounds."""
+    """One block's window LD and confirmation memo, kept across rounds.
 
-    def __init__(self, block):
-        self._block = block
+    Entries are keyed by source rows; :meth:`retain` keeps only the windows
+    the next round tiles, within :data:`_SPLIT_HALF_CACHE_BYTES`.
+    """
+
+    def __init__(self, block, source_rows):
+        self._block, self._source_rows = block, source_rows
         self._entries = {}
         self._charged = 0
 
+    def _rows(self, local):
+        return local if self._source_rows is None else self._source_rows[local]
+
     def get(self, local):
-        key = local.tobytes()
+        rows = self._rows(local)
+        key = rows.tobytes()
         hit = self._entries.get(key)
         if hit is not None:
             return hit[0]
-        entry = (_window_ld(self._block, local), {})
-        cost = 2 * entry[0].nbytes + 16 * local.size
+        entry = (_window_ld(self._block, rows), {})
+        cost = 2 * entry[0].nbytes + 16 * rows.size
         if self._charged + cost <= _SPLIT_HALF_CACHE_BYTES:
             self._entries[key] = (entry, cost)
             self._charged += cost
         return entry
 
     def retain(self, tiles):
-        wanted = {local.tobytes() for local in tiles}
+        wanted = {self._rows(local).tobytes() for local in tiles}
         for key in [key for key in self._entries if key not in wanted]:
             self._charged -= self._entries.pop(key)[1]
 
 
-def _settle_block(task, *, z, window, threshold, eigenvalue_floor):
-    """Screen one block through every round; return its keep/tested masks."""
-    block, idx, round_seeds = task
+def _settle_block(task, *, z, window, threshold, eigenvalue_floor, eigh):
+    """Screen one block through every round; return its own masks.
+
+    A block's schedule depends only on that block, its z-scores and its own
+    random streams, so serial and pooled runs agree by construction. Traits
+    whose survivors coincide share each window's LD and factors.
+    """
+    block, idx, source_rows, round_seeds = task
     n_traits = z.shape[0]
     keep = np.ones((n_traits, idx.size), dtype=bool)
     tested = np.zeros((n_traits, idx.size), dtype=bool)
     zb = z[:, idx]
     dropped = np.zeros((n_traits, len(round_seeds)), dtype=np.int64)
-    windows = _SplitHalfWindows(block)
+    windows = _SplitHalfWindows(block, source_rows)
     for round_no, round_seed in enumerate(round_seeds):
         groups = _split_half_groups(keep)
         n_before = keep.sum(axis=1)
@@ -336,7 +366,7 @@ def _settle_block(task, *, z, window, threshold, eigenvalue_floor):
                 first, second = order[:half], order[half:]
                 splits = [
                     (targets, predictors, _split_half_factor(
-                        ld, predictors, targets, eigenvalue_floor))
+                        ld, predictors, targets, eigenvalue_floor, eigh))
                     for targets, predictors in ((first, second),
                                                 (second, first))]
                 for trait in members:
@@ -352,7 +382,7 @@ def _settle_block(task, *, z, window, threshold, eigenvalue_floor):
                     if flagged:
                         candidates = np.unique(np.concatenate(flagged))
                         drop = _confirmed_drops(ld, zw, candidates, threshold,
-                                                shared=shared)
+                                                shared=shared, eigh=eigh)
                         if drop.size:
                             keep[trait, local[drop]] = False
         dropped[:, round_no] = n_before - keep.sum(axis=1)
@@ -364,7 +394,7 @@ def _settle_block(task, *, z, window, threshold, eigenvalue_floor):
     return keep, dropped, tested
 
 
-def _validate_blocks(blocks, m):
+def _validate_blocks(blocks, m, *, contiguous=False):
     """An exact, non-overlapping cover of ``0..m-1`` by ``(LD, idx)`` pairs."""
     if m < 1 or not blocks:
         raise ValueError("blocks must cover at least one variant")
@@ -384,6 +414,8 @@ def _validate_blocks(blocks, m):
             raise ValueError(f"block indices must lie in [0, {m})")
         if seen[idx].any() or np.unique(idx).size != idx.size:
             raise ValueError("LD blocks overlap or repeat an index")
+        if contiguous and idx.size > 1 and np.any(np.diff(idx) != 1):
+            raise ValueError("each LD block must cover consecutive indices")
         seen[idx] = True
         size = _block_size(corr)
         if size is not None and size != idx.size:
@@ -394,39 +426,137 @@ def _validate_blocks(blocks, m):
     return out
 
 
-def _report_screen(keep, tested, per_round, total, *, label, verbose):
+def _progress_event(progress, step, done, total):
+    if progress is not None:
+        progress({"step": str(step), "done": int(done), "total": int(total),
+                  "unit": "block"})
+
+
+def _report_screen(keep, tested, per_round, total, *, label, verbose,
+                   stats_out, warning_stacklevel):
+    """One trait's counts, drop/untested warnings and verbose printout."""
     n_tested = int(tested.sum())
     n_untested = int((~tested).sum())
     n_dropped = int((~keep).sum())
+    if stats_out is not None:
+        stats_out.update(n_tested=n_tested, n_untested=n_untested,
+                         n_dropped=n_dropped)
     if n_tested and (n_dropped / n_tested) > DEFAULT_DROP_FRACTION_WARN:
         warnings.warn(
-            f"{label}{LD_SCREEN_HIGH_DROP} {n_dropped:,} of {n_tested:,} tested "
-            f"variants ({n_dropped / n_tested:.0%}). At the default threshold "
-            "the expected null rate is near zero; several percent usually "
-            "means the LD reference is thresholded, indefinite or from another "
-            "ancestry. Inspect the reference before treating the mask as QC.",
-            RuntimeWarning, stacklevel=3)
+            f"{label}{LD_SCREEN_HIGH_DROP} {n_dropped:,} of "
+            f"{n_tested:,} tested variants ({n_dropped / n_tested:.0%}). At "
+            "the default chi2 threshold the expected null rate is near zero; "
+            "rates of several percent usually mean the LD reference is "
+            "thresholded or indefinite (the eigenvalue floor and the leverage "
+            "then disagree). Inspect the reference before treating the mask "
+            "as QC.", RuntimeWarning, stacklevel=warning_stacklevel)
     if n_untested and (n_tested == 0
                        or n_untested / total >= DEFAULT_UNTESTED_FRACTION_WARN):
         warnings.warn(
             f"{label}LD-consistency screen tested {n_tested:,} of {total:,} "
             f"variants ({n_untested:,} {LD_SCREEN_UNTESTED} of size "
-            f"{MIN_WINDOW} and were kept unevaluated).",
-            RuntimeWarning, stacklevel=3)
+            f"{MIN_WINDOW} and were kept unevaluated). A sparse panel can be "
+            "largely unscreened while still recording that a screen ran.",
+            RuntimeWarning, stacklevel=warning_stacklevel)
     if verbose:
         remaining = total
         for round_no, count in enumerate(per_round):
             remaining -= int(count)
             print(f"  {label}LD screen round {round_no + 1}: dropped "
                   f"{count:,}, {remaining:,} remain", flush=True)
+        extra = (f" ({n_untested:,} untested, kept without evaluation)"
+                 if n_untested else "")
+        print(f"  {label}LD screen tested {n_tested:,} of {total:,} "
+              f"variants{extra}", flush=True)
     return {"n_tested": n_tested, "n_untested": n_untested,
             "n_dropped": n_dropped, "per_round": [int(c) for c in per_round]}
+
+
+def _run_screen(specs, z, total, *, rounds, window, threshold,
+                eigenvalue_floor, seed, ncores, verbose, progress,
+                progress_label, stats_out, eigh, warning_stacklevel):
+    """Validate controls and screen ``(block, idx, source_rows)`` specs."""
+    validate_boolean(verbose=verbose)
+    if progress is not None and not callable(progress):
+        raise TypeError(f"progress must be callable or None, got "
+                        f"{type(progress).__name__}")
+    seed = validate_seed(seed)
+    rounds = integer_at_least("rounds", rounds, 1)
+    window = integer_at_least("window", window, MIN_WINDOW)
+    threshold = finite_control("threshold", threshold)
+    if threshold <= 0:
+        raise ValueError("threshold must be > 0")
+    eigenvalue_floor = finite_control("eigenvalue_floor", eigenvalue_floor,
+                                      lower=0.0)
+    if eigenvalue_floor >= 1:
+        raise ValueError("eigenvalue_floor must be < 1")
+    ncores = integer_at_least("ncores", ncores, 1)
+    eigh = _screen_eigh if eigh is None else eigh
+
+    single = np.ndim(z) == 1
+    zt = np.ascontiguousarray(
+        np.asarray(z, dtype=_WORK_DTYPE).reshape(total, -1).T)
+    # One independent stream per (block, round), derived in a fixed order.
+    root = np.random.SeedSequence(seed)
+    tasks = [(*spec, child.spawn(rounds))
+             for spec, child in zip(specs, root.spawn(len(specs)))]
+    settle = functools.partial(_settle_block, z=zt, window=window,
+                               threshold=threshold,
+                               eigenvalue_floor=eigenvalue_floor, eigh=eigh)
+
+    def _settled(source):
+        out = []
+        for done, item in enumerate(source, 1):
+            out.append(item)
+            _progress_event(progress, progress_label, done, len(tasks))
+        return out
+
+    if ncores > 1 and len(tasks) > 1:
+        # Blocks are independent; the caller is responsible for a BLAS that
+        # tolerates concurrent LAPACK calls (pin it to one thread).
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=ncores) as executor:
+            results = _settled(executor.map(settle, tasks))
+    else:
+        results = _settled(settle(task) for task in tasks)
+
+    n_traits = zt.shape[0]
+    keep = np.ones((n_traits, total), dtype=bool)
+    tested = np.zeros((n_traits, total), dtype=bool)
+    per_round = np.zeros((n_traits, rounds), dtype=np.int64)
+    for (block_keep, dropped, block_tested), spec in zip(results, specs):
+        idx = spec[1]
+        keep[:, idx] = block_keep
+        tested[:, idx] = block_tested
+        per_round += dropped
+    stats = []
+    for trait in range(n_traits):
+        stats.append(_report_screen(
+            keep[trait], tested[trait], per_round[trait], total,
+            label="" if single else f"z column {trait}: ", verbose=verbose,
+            stats_out=stats_out, warning_stacklevel=warning_stacklevel + 1))
+    return (keep[0] if single else keep.T), (stats[0] if single else stats)
+
+
+def _check_z(z, total):
+    z = np.asarray(z, dtype=np.float64)
+    if (z.ndim not in (1, 2) or z.shape[0] != total
+            or (z.ndim == 2 and z.shape[1] == 0)):
+        raise ValueError(
+            f"z has shape {z.shape}, but the blocks span {total} variants; "
+            "pass (m,) or (m, n_traits)")
+    if not np.all(np.isfinite(z)):
+        raise ValueError("z contains non-finite values; filter them first")
+    return z
 
 
 def ld_consistency_screen(blocks, z, *, rounds=DEFAULT_ROUNDS,
                           window=DEFAULT_WINDOW, threshold=DEFAULT_THRESHOLD,
                           eigenvalue_floor=DEFAULT_SPLIT_HALF_EIGENVALUE_FLOOR,
-                          seed=0, verbose=False, return_stats=False):
+                          seed=0, ncores=1, verbose=False, progress=None,
+                          progress_label="LD consistency screen",
+                          return_stats=False, stats_out=None, _eigh=None,
+                          _warning_stacklevel=2):
     """Keep-mask of variants whose z-scores are consistent with their LD.
 
     Parameters
@@ -445,6 +575,13 @@ def ld_consistency_screen(blocks, z, *, rounds=DEFAULT_ROUNDS,
     window, threshold, eigenvalue_floor, seed
         Window size (variants), chi-square cut, pinv truncation and the seed
         of the random splits.
+    ncores : int
+        Screen this many blocks concurrently. The mask equals ``ncores=1``
+        whatever the pool does, but the windows' LAPACK eigensolves then run
+        concurrently: use it only with a reentrant BLAS pinned to one thread.
+    progress : callable, optional
+        Called from this thread with ``{"step", "done", "total", "unit"}``
+        after each block.
     return_stats : bool
         Also return per-trait counts: ``n_tested``, ``n_untested`` (variants
         in a block smaller than :data:`MIN_WINDOW`, kept unevaluated),
@@ -460,55 +597,89 @@ def ld_consistency_screen(blocks, z, *, rounds=DEFAULT_ROUNDS,
         total = sum(len(idx) for _block, idx in blocks)
     except (TypeError, ValueError):
         raise ValueError("blocks must be a sequence of (LD, index) pairs") from None
+    z = _check_z(z, total)
+    blocks = _validate_blocks(blocks, total)
+    validate_boolean(return_stats=return_stats)
+    keep, stats = _run_screen(
+        [(block, idx, None) for block, idx in blocks], z, total,
+        rounds=rounds, window=window, threshold=threshold,
+        eigenvalue_floor=eigenvalue_floor, seed=seed, ncores=ncores,
+        verbose=verbose, progress=progress, progress_label=progress_label,
+        stats_out=stats_out, eigh=_eigh,
+        warning_stacklevel=_warning_stacklevel + 1)
+    return (keep, stats) if return_stats else keep
+
+
+def ld_consistency_screen_selected(blocks, selection, z, *,
+                                   rounds=DEFAULT_ROUNDS,
+                                   window=DEFAULT_WINDOW,
+                                   threshold=DEFAULT_THRESHOLD,
+                                   eigenvalue_floor=DEFAULT_SPLIT_HALF_EIGENVALUE_FLOOR,
+                                   seed=0, ncores=1, verbose=False,
+                                   progress=None,
+                                   progress_label="LD consistency screen",
+                                   return_stats=False, stats_out=None,
+                                   _eigh=None, _warning_stacklevel=2):
+    """Screen the variants ``selection`` of contiguous blocks, in place.
+
+    ``blocks`` tile ``0..M-1`` contiguously (a whole LD cache); ``selection``
+    is a strictly increasing index vector into that space and ``z`` is
+    aligned to it. Only window-sized submatrices of each source block are
+    formed, so the selected panel is never materialised. The result, seed
+    streams and progress events equal subsetting the blocks first and then
+    calling :func:`ld_consistency_screen`.
+    """
+    try:
+        source = list(blocks)
+        source_total = sum(len(idx) for _block, idx in source)
+    except (TypeError, ValueError):
+        raise ValueError("blocks must be a sequence of (LD, index) pairs") from None
+    source = _validate_blocks(source, source_total, contiguous=True)
+    expected = 0
+    for _block, idx in source:
+        if int(idx[0]) != expected:
+            raise ValueError("LD blocks must tile contiguous indices 0..m-1")
+        expected += int(idx.size)
+    values = np.asarray(selection)
+    if (values.ndim != 1 or not np.issubdtype(values.dtype, np.integer)
+            or np.issubdtype(values.dtype, np.bool_)):
+        raise ValueError("selection must be a one-dimensional integer array")
+    selection = values.astype(np.int64, copy=False)
+    if selection.size == 0:
+        raise ValueError("selection contains no variants")
+    if selection[0] < 0 or selection[-1] >= source_total:
+        raise IndexError(f"selection indices must lie in [0, {source_total})")
+    if selection.size > 1 and np.any(np.diff(selection) <= 0):
+        raise ValueError("selection must be strictly increasing and unique")
     z = np.asarray(z, dtype=np.float64)
-    if (z.ndim not in (1, 2) or z.shape[0] != total
-            or (z.ndim == 2 and z.shape[1] == 0)):
-        raise ValueError(
-            f"z has shape {z.shape}, but the blocks span {total} variants; "
-            "pass (m,) or (m, n_traits)")
+    if z.shape != (selection.size,):
+        raise ValueError(f"z has shape {z.shape}, but selection spans "
+                         f"{selection.size} variants")
     if not np.all(np.isfinite(z)):
         raise ValueError("z contains non-finite values; filter them first")
-    blocks = _validate_blocks(blocks, total)
-    validate_boolean(verbose=verbose, return_stats=return_stats)
-    seed = validate_seed(seed)
-    rounds = integer_at_least("rounds", rounds, 1)
-    window = integer_at_least("window", window, MIN_WINDOW)
-    threshold = finite_control("threshold", threshold)
-    if threshold <= 0:
-        raise ValueError("threshold must be > 0")
-    eigenvalue_floor = finite_control("eigenvalue_floor", eigenvalue_floor,
-                                      lower=0.0)
-    if eigenvalue_floor >= 1:
-        raise ValueError("eigenvalue_floor must be < 1")
-
-    single = z.ndim == 1
-    zt = np.ascontiguousarray(
-        np.asarray(z, dtype=_WORK_DTYPE).reshape(total, -1).T)
-    # One independent stream per (block, round), derived in a fixed order.
-    root = np.random.SeedSequence(seed)
-    tasks = [(block, idx, child.spawn(rounds))
-             for (block, idx), child in zip(blocks, root.spawn(len(blocks)))]
-    n_traits = zt.shape[0]
-    keep = np.ones((n_traits, total), dtype=bool)
-    tested = np.zeros((n_traits, total), dtype=bool)
-    per_round = np.zeros((n_traits, rounds), dtype=np.int64)
-    for task in tasks:
-        block_keep, dropped, block_tested = _settle_block(
-            task, z=zt, window=window, threshold=threshold,
-            eigenvalue_floor=eigenvalue_floor)
-        idx = task[1]
-        keep[:, idx] = block_keep
-        tested[:, idx] = block_tested
-        per_round += dropped
-    stats = []
-    for t in range(n_traits):
-        stats.append(_report_screen(keep[t], tested[t], per_round[t], total,
-                                    label="" if single else f"z column {t}: ",
-                                    verbose=verbose))
-    out = keep[0] if single else keep.T
-    if return_stats:
-        return out, (stats[0] if single else stats)
-    return out
+    validate_boolean(return_stats=return_stats)
+    specs = []
+    out_start = 0
+    for block, idx in source:
+        start, stop = int(idx[0]), int(idx[-1]) + 1
+        left = int(np.searchsorted(selection, start, side="left"))
+        right = int(np.searchsorted(selection, stop, side="left"))
+        if left == right:
+            continue
+        source_rows = selection[left:right] - start
+        count = int(source_rows.size)
+        specs.append((block, np.arange(out_start, out_start + count,
+                                       dtype=np.int64), source_rows))
+        out_start += count
+    if out_start != selection.size:
+        raise ValueError("LD blocks do not cover every selected variant")
+    keep, stats = _run_screen(
+        specs, z, int(selection.size), rounds=rounds, window=window,
+        threshold=threshold, eigenvalue_floor=eigenvalue_floor, seed=seed,
+        ncores=ncores, verbose=verbose, progress=progress,
+        progress_label=progress_label, stats_out=stats_out, eigh=_eigh,
+        warning_stacklevel=_warning_stacklevel + 1)
+    return (keep, stats) if return_stats else keep
 
 
 def dense_blocks(R, sizes):

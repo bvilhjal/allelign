@@ -940,7 +940,7 @@ def test_reference_coverage_names_the_cause_of_a_thin_alignment():
     cov = reference_coverage(sparse, variants, harmonize(sparse, variants))
     assert cov["reason"] == "sparse_sumstats"
     assert cov["n_matched"] == 20 and cov["frac_of_sumstats"] == 1.0
-    assert "hits-only" in coverage_message(cov)
+    assert "significant-hits-only" in coverage_message(cov)
 
     # Full overlap is silent: no warning to ignore next time.
     full = make(ids, chrom, pos)
@@ -956,7 +956,7 @@ def test_reference_coverage_names_the_cause_of_a_thin_alignment():
     cov["frac_of_reference"] = 0.0
     cov = reference_coverage(empty, variants, harmonize(empty, variants))
     assert cov["reason"] == "no_rows_offered"
-    assert "no rows reached alignment" in coverage_message(cov)
+    assert "QC removed every row" in coverage_message(cov)
 
 
 def test_coverage_thresholds_are_the_shared_ones():
