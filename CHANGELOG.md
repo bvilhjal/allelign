@@ -4,6 +4,15 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0.dev3] - 2026-10-12
+
+### Changed
+
+- Gzip weight and status tables use compression level 1 to reduce writing
+  time. Decompressed text and atomic publication remain unchanged.
+
+## [0.1.0.dev2] - 2026-10-10
+
 ### Added (0.1.0.dev2)
 
 - `read_scoring_file(keep=...)` prefilters rows a reference cannot match, as multipgs's private `_reference_filter` did. `harmonize_weights` takes the weight mass over the whole file and counts the skipped rows as unmatched. `ScoringFile` gains `trait` and `__str__`, and `scoring_file_id` is public: multipgs now reads PGS Catalog files through allelign.

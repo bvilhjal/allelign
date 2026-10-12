@@ -82,7 +82,7 @@ def atomic_text(path):
     try:
         if path.name.endswith(".gz"):
             os.close(fd)
-            with gzip.open(temporary, "wt", encoding="utf-8") as fh:
+            with gzip.open(temporary, "wt", encoding="utf-8", compresslevel=1) as fh:
                 yield fh
         else:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
