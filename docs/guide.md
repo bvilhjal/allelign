@@ -26,7 +26,7 @@
 Per-variant N comes from, in order:
 
 1. an explicit override (`n_eff="col"`) or a scalar (`n_eff=…`, or `n_cases=…, n_controls=…`, which flatten every row);
-2. an explicit effective-N column (`Neff`, `n_eff`);
+2. an explicit effective-N column (`Neff`, `n_eff`, `Effective_N`, `N_effective`), even beside a total-N column;
 3. per-variant case and control counts, giving `4/(1/N_case + 1/N_control)` (warns);
 4. a total-N column.
 
@@ -110,6 +110,7 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
 ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 too. They are listed against ldpred3 0.9.8, the last release with its own reader.
 
 - Case and control count columns give effective N when no explicit effective-N column exists. ldpred3 would use a total-N column.
-- New aliases sit after ldpred3's in every list, so files ldpred3 maps are mapped identically. Files ldpred3 could not map (PLINK2 with REF/ALT, REGENIE, Neale, `hm_` sets) now map.
+- An effective-N column (`Effective_N`, `N_effective`, `all_inv_var_meta_effective`) wins over a total-N column such as `N` in the same header. ldpred3 read the total N.
+- New aliases sit after ldpred3's in every list, so files ldpred3 maps are mapped identically, apart from the effective-N rule above. Files ldpred3 could not map (PLINK2 with REF/ALT, REGENIE, Neale, `hm_` sets) now map.
 - `write_pgs_scoring_file` writes `#sd_source=unspecified` instead of `empirical` when the source is unknown.
 - `in_long_range_ld` normalises chromosome labels. APOE is off by default.

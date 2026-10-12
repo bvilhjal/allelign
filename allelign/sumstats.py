@@ -59,7 +59,9 @@ class ColumnMappingError(ValueError):
 
 #: Column aliases (lower-cased) -> canonical field, in priority order. The
 #: first block of every list is ldpred3's, unchanged, so any file ldpred3 maps
-#: maps identically here; later entries only add coverage.
+#: maps identically here; later entries only add coverage. One exception: for
+#: ``n_eff`` an effective-N name (``_EFFECTIVE_N_NAMES``) wins over a total-N
+#: alias, so ``Effective_N`` beside ``N`` gives N from ``Effective_N``.
 COLUMN_ALIASES = {
     "id": ["snp", "rsid", "rs", "id", "variant_id", "markername", "snpid",
            "marker", "rs_id",
@@ -106,8 +108,8 @@ COLUMN_ALIASES = {
              "imputationinfo"],
 }
 
-#: N-column names that already are an effective N (kept even when case and
-#: control counts are present).
+#: N-column names that already are an effective N: preferred over a total-N
+#: column and kept even when case and control counts are present.
 _EFFECTIVE_N_NAMES = frozenset({"n_eff", "neff", "n_effective", "effective_n",
                                 "all_inv_var_meta_effective"})
 
@@ -215,6 +217,10 @@ def _build_colmap(header, overrides):
     lower = [h.strip().lower() for h in header]
     colmap = {}
     for field, aliases in COLUMN_ALIASES.items():
+        if field == "n_eff":
+            # Effective-N names first, so an ``Effective_N`` column is not
+            # shadowed by a total ``N`` listed earlier in the aliases.
+            aliases = sorted(aliases, key=lambda a: a not in _EFFECTIVE_N_NAMES)
         for a in aliases:
             if a in lower:
                 colmap[field] = lower.index(a)

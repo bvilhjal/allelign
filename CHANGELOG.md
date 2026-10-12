@@ -4,6 +4,14 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0.dev4] - 2026-10-12
+
+### Fixed
+
+- `read_sumstats`, `detect_columns` and `inspect_columns` take N from an effective-N
+  column (`Effective_N`, `N_effective`, `all_inv_var_meta_effective`) beside a total-N
+  column such as `N`, as documented. They used to read the total, ~2.8x too high at 10% cases.
+
 ## [0.1.0.dev3] - 2026-10-12
 
 ### Changed

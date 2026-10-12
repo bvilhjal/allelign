@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 import allelign.sumstats as S
-from allelign import (ColumnMappingError, inspect_columns, n_eff_case_control,
-                      read_sumstats, write_sumstats)
+from allelign import (ColumnMappingError, detect_columns, inspect_columns,
+                      n_eff_case_control, read_sumstats, write_sumstats)
 
 
 def _write(tmp_path, text, name="ss.txt"):
@@ -150,6 +150,50 @@ def test_case_control_columns_give_effective_n(tmp_path, jit):
     assert ss.parse_log["n_eff_source"] == "case_control"
     # An explicit N column override keeps the total.
     assert read_sumstats(path, n_eff="N").n_eff[0] == 11000
+
+
+@pytest.mark.parametrize("total,effective", [
+    ("N", "Effective_N"), ("OBS_CT", "N_effective"),
+    ("sample_size", "all_inv_var_meta_effective")])
+def test_effective_n_column_wins_over_total_n(tmp_path, jit, total, effective):
+    # Total-N aliases precede these effective-N names in COLUMN_ALIASES; a
+    # 10%-case GWAS read at its total N would be fitted at ~2.8x its N_eff.
+    path = _write(tmp_path, f"SNP\tA1\tA2\tBETA\tSE\t{total}\t{effective}\n"
+                  "rs1\tA\tG\t0.1\t0.01\t100000\t36000\n"
+                  "rs2\tC\tT\t-0.1\t0.01\t99000\t35640\n")
+    ss = read_sumstats(path)
+    np.testing.assert_array_equal(ss.n_eff, [36000, 35640])
+    assert ss.parse_log["n_eff_source"] == f"column:{effective.lower()}"
+    assert ss.parse_log["columns"]["n_eff"] == effective
+    assert detect_columns(path)[1]["n_eff"] == effective
+    assert inspect_columns(path)["n_source"] == f"column:{effective.lower()}"
+    # An explicit override still reads the total.
+    forced = read_sumstats(path, n_eff=total)
+    np.testing.assert_array_equal(forced.n_eff, [100000, 99000])
+    assert forced.parse_log["n_eff_source"] == f"column:{total.lower()}"
+    # A lone total-N column is read as before.
+    only = _write(tmp_path, f"SNP\tA1\tA2\tBETA\tSE\t{total}\n"
+                  "rs1\tA\tG\t0.1\t0.01\t100000\n"
+                  "rs2\tC\tT\t-0.1\t0.01\t99000\n", name="only.txt")
+    alone = read_sumstats(only)
+    np.testing.assert_array_equal(alone.n_eff, [100000, 99000])
+    assert alone.parse_log["n_eff_source"] == f"column:{total.lower()}"
+
+
+@pytest.mark.parametrize("header,values,name", [
+    ("Neff\tN_CASES\tN_CONTROLS", "3600\t1000\t10000", "Neff"),
+    ("N\tN_CASES\tN_CONTROLS\tEffective_N", "11000\t1000\t10000\t3600",
+     "Effective_N")], ids=["Neff", "N+Effective_N"])
+def test_effective_n_column_wins_over_case_control_counts(tmp_path, jit, header,
+                                                          values, name):
+    path = _write(tmp_path, f"SNP\tA1\tA2\tBETA\tSE\t{header}\n"
+                  f"rs1\tA\tG\t0.1\t0.01\t{values}\n")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ss = read_sumstats(path)
+    assert not any("case and control" in str(w.message) for w in caught)
+    assert ss.n_eff[0] == 3600
+    assert ss.parse_log["n_eff_source"] == f"column:{name.lower()}"
 
 
 def test_scalar_case_control_counts(tmp_path):
