@@ -330,6 +330,10 @@ def _n_plan(colmap, lower, overrides, forced_n):
         return "scalar", None
     if "n_eff" in overrides:
         return "column", lower[colmap["n_eff"]]
+    if "n_cases" in overrides or "n_controls" in overrides:
+        if "n_cases" not in colmap or "n_controls" not in colmap:
+            raise ColumnMappingError("explicit case/control columns require both counts")
+        return "case_control", None
     if "n_eff" in colmap and lower[colmap["n_eff"]] in _EFFECTIVE_N_NAMES:
         return "column", lower[colmap["n_eff"]]
     if "n_cases" in colmap and "n_controls" in colmap:

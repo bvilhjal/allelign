@@ -25,7 +25,7 @@
 
 Per-variant N comes from, in order:
 
-1. an explicit override (`n_eff="col"`) or a scalar (`n_eff=…`, or `n_cases=…, n_controls=…`, which flatten every row);
+1. a scalar (`n_eff=…`, or numeric `n_cases=…, n_controls=…`, which flatten every row), then an explicit `n_eff="col"` mapping, then explicit case/control column mappings (both counts must resolve);
 2. an explicit effective-N column (`Neff`, `n_eff`, `Effective_N`, `N_effective`), even beside a total-N column;
 3. per-variant case and control counts, giving `4/(1/N_case + 1/N_control)` (warns);
 4. a total-N column.

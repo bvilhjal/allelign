@@ -4,6 +4,14 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0.dev5] - 2026-10-13
+
+### Fixed
+
+- Explicit case/control column mappings take precedence over auto-detected N,
+  including effective-N columns. Both counts must resolve; a scalar N or an
+  explicit `n_eff` mapping still wins. Reading and header-only inspection agree.
+
 ## [0.1.0.dev4] - 2026-10-12
 
 ### Fixed

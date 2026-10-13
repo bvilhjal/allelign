@@ -264,3 +264,25 @@ def test_or_beta_warning_still_fires(tmp_path):
         ss = read_sumstats(path)
     assert ss.parse_log.get("suspected_odds_ratio_in_beta") is True
     assert any("odds ratios" in str(w.message) for w in caught)
+
+
+@pytest.mark.parametrize('column', ['N', 'Neff'])
+def test_explicit_count_columns_override_detected_n(tmp_path, jit, column):
+    path = _write(tmp_path, f'SNP\tA1\tA2\tBETA\tSE\t{column}\tCasesCustom\tN_CONTROLS\n'
+                  'rs1\tA\tG\t0.1\t0.01\t10000\t1000\t9000\n')
+    with pytest.warns(RuntimeWarning, match='case and control'):
+        ss = read_sumstats(path, n_cases='CasesCustom')
+    assert ss.n_eff[0] == pytest.approx(3600)
+    assert ss.parse_log['n_eff_source'] == 'case_control'
+    assert inspect_columns(path, n_cases='CasesCustom')['n_source'] == 'case_control'
+    # Explicit effective N still takes precedence over count mappings.
+    assert read_sumstats(path, n_cases='CasesCustom', n_eff=column).n_eff[0] == 10000
+    assert read_sumstats(path, n_cases='CasesCustom', n_eff=8000).n_eff[0] == 8000
+
+
+def test_explicit_count_column_requires_its_partner(tmp_path):
+    path = _write(tmp_path, 'SNP\tA1\tA2\tBETA\tSE\tNeff\tCasesCustom\n'
+                  'rs1\tA\tG\t0.1\t0.01\t10000\t1000\n')
+    for read in (read_sumstats, inspect_columns):
+        with pytest.raises(ValueError, match='require both counts'):
+            read(path, n_cases='CasesCustom')
