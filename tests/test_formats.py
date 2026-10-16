@@ -208,6 +208,19 @@ def test_scalar_case_control_counts(tmp_path):
     assert np.isnan(read_sumstats(path, require_n=False).n_eff[0])
 
 
+def test_n_eff_case_control_balanced_imbalanced_arrays_and_rejection():
+    # Moved from ldpred3/tests/test_scale.py; ldpred3.scale re-exports this.
+    # balanced case/control -> effective N == total N
+    assert n_eff_case_control(5000, 5000) == pytest.approx(10000)
+    # extreme imbalance -> approaches 4 * n_case
+    assert n_eff_case_control(1000, 10**9) == pytest.approx(4000, rel=1e-3)
+    # arrays
+    n = n_eff_case_control(np.array([5000, 1000]), np.array([5000, 9000]))
+    assert np.allclose(n, [10000, 4 / (1 / 1000 + 1 / 9000)])
+    with pytest.raises(ValueError):
+        n_eff_case_control(0, 100)
+
+
 def test_neale_variant_strings(tmp_path):
     path = _write(tmp_path,
                   "variant\tminor_allele\tminor_AF\tlow_confidence_variant\t"

@@ -107,6 +107,15 @@ def test_catalog_schema_keeps_harmonised_frequency_with_its_allele():
     assert odds is None and z is None
 
 
+def test_catalog_schema_keeps_a_submitted_frequency_beside_submitted_alleles():
+    """Without hm_ alleles the submitted frequency describes its own allele."""
+    mapping, _, _ = resolve_gwas_catalog_columns(
+        ["variant_id", "chromosome", "base_pair_location", "effect_allele",
+         "other_allele", "beta", "standard_error", "p_value",
+         "effect_allele_frequency"])
+    assert mapping["eaf"] == "effect_allele_frequency"
+
+
 @pytest.mark.parametrize("effect", ["hm_odds_ratio", "Zscore"])
 def test_catalog_schema_preserves_fallback_columns_and_provider_priority(effect):
     header = ["rsid", "effect_allele", "other_allele", "se", effect,

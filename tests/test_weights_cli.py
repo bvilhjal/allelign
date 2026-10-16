@@ -169,6 +169,118 @@ def test_build_check():
         normalize_build("hg17")
 
 
+def test_normalize_build_accepts_common_spellings_and_refuses_the_rest():
+    for text in ("GRCh37", "hg19", "b37", "37", " GRCH37 "):
+        assert normalize_build(text) == "GRCh37"
+    for text in ("GRCh38", "hg38", "b38", "38"):
+        assert normalize_build(text) == "GRCh38"
+    assert normalize_build(None) is None
+    with pytest.raises(ValueError, match="unknown genome build"):
+        normalize_build("hg18")
+
+
+def test_weight_table_rejects_malformed_or_nonfinite_data_before_writing(tmp_path):
+    base = dict(id=["rs1"], chrom=["1"], pos=[1], effect_allele=["A"],
+                other_allele=["G"], weight=[0.1])
+    path = tmp_path / "weights.tsv"
+    with pytest.raises(ValueError, match="equal lengths"):
+        write_weights(path, **{**base, "weight": [0.1, 0.2]})
+    assert not path.exists()
+    with pytest.raises(ValueError, match="finite"):
+        write_weights(path, **{**base, "weight": [np.nan]})
+    assert not path.exists()
+    with pytest.raises(ValueError, match="provided together"):
+        write_weights(path, **base, af=[0.2])
+    assert not path.exists()
+    with pytest.raises(ValueError, match="sd must be >= 0"):
+        write_weights(path, **base, af=[0.2], sd=[-0.1])
+    assert not path.exists()
+
+
+def test_weight_write_failure_preserves_previous_file(tmp_path, monkeypatch):
+    import os
+    path = tmp_path / "weights.tsv"
+    path.write_text("previous complete file\n")
+
+    def fail(*args):
+        raise OSError("simulated publication failure")
+    monkeypatch.setattr(os, "replace", fail)
+    with pytest.raises(OSError, match="publication"):
+        write_weights(path, id=["rs1"], chrom=["1"], pos=[1],
+                      effect_allele=["A"], other_allele=["C"], weight=[.1])
+    assert path.read_text() == "previous complete file\n"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_weight_reader_validates_header_rows_and_scale(tmp_path):
+    path = tmp_path / "weights.tsv"
+    path.write_text("ID\tCHR\tPOS\tA1\tA2\tWEIGHT\nrs1\t1\t1\tA\tG\tnan\n")
+    with pytest.raises(ValueError, match="finite"):
+        read_weights(path)
+    path.write_text("ID\tCHR\tPOS\tA1\tA2\tWEIGHT\tAF_REF\n"
+                    "rs1\t1\t1\tA\tG\t0.1\t0.2\n")
+    with pytest.raises(ValueError, match="both AF_REF and SD_REF"):
+        read_weights(path)
+    path.write_text("CHR ID POS A2 A1 WEIGHT SD_REF AF_REF\n"
+                    "1 rs1 1 G A 0.1 1.2 0.2\n")
+    with pytest.warns(UserWarning, match="no SD_SOURCE"):
+        got = read_weights(path)
+    assert got.id.tolist() == ["rs1"] and got.has_scale
+
+
+def test_sd_source_round_trips_and_defaults_to_empirical(tmp_path):
+    """SD_SOURCE records how SD_REF was obtained; old files stay readable.
+
+    bipred fills SD_REF with the HWE approximation sqrt(2f(1-f)) behind a
+    RuntimeWarning, because it fits summary statistics against an LD reference
+    and never observes a fit cohort. That warning cannot survive serialisation,
+    so before this column a frozen-scale scorer could not tell an approximated
+    SD from an observed one.
+    """
+    written = tmp_path / "empirical.tsv"
+    write_weights(written, id=["rs1", "rs2"], chrom=["1", "1"], pos=[100, 200],
+                  effect_allele=["A", "A"], other_allele=["G", "G"],
+                  weight=[0.2, -0.1], af=[0.4, 0.3], sd=[0.5, 0.4])
+    assert "SD_SOURCE" in written.read_text().splitlines()[0]
+    wt = read_weights(written)
+    assert wt.sd_source == "empirical" and not wt.sd_is_hwe
+
+    hwe = tmp_path / "hwe.tsv"
+    write_weights(hwe, id=["rs1"], chrom=["1"], pos=[100],
+                  effect_allele=["A"], other_allele=["G"], weight=[0.2],
+                  af=[0.4], sd=[0.5], sd_source="hwe")
+    assert read_weights(hwe).sd_is_hwe
+
+    # Pre-2026-08-22 files carry no such column and must still parse, reporting
+    # None rather than guessing which kind of SD they hold -- but the
+    # empirical assumption is now audible, and a reader who knows the file
+    # (e.g. a legacy bipred output) can declare it instead.
+    legacy = tmp_path / "legacy.tsv"
+    legacy.write_text("ID\tCHR\tPOS\tA1\tA2\tWEIGHT\tAF_REF\tSD_REF\n"
+                      "rs1\t1\t100\tA\tG\t0.2\t0.4\t0.5\n")
+    with pytest.warns(UserWarning, match="no SD_SOURCE"):
+        old = read_weights(legacy)
+    assert old.has_scale and old.sd_source is None and not old.sd_is_hwe
+    declared = read_weights(legacy, sd_source="hwe")
+    assert declared.sd_source == "hwe" and declared.sd_is_hwe
+    with pytest.raises(ValueError, match="contradicts"):
+        read_weights(written, sd_source="hwe")
+    with pytest.raises(ValueError, match="sd_source must be one of"):
+        read_weights(legacy, sd_source="guessed")
+
+    with pytest.raises(ValueError, match="sd_source must be one of"):
+        write_weights(tmp_path / "bad.tsv", id=["rs1"], chrom=["1"], pos=[100],
+                      effect_allele=["A"], other_allele=["G"], weight=[0.2],
+                      af=[0.4], sd=[0.5], sd_source="guessed")
+
+    mixed = tmp_path / "mixed.tsv"
+    mixed.write_text("ID\tCHR\tPOS\tA1\tA2\tWEIGHT\tAF_REF\tSD_REF\tSD_SOURCE\n"
+                     "rs1\t1\t100\tA\tG\t0.2\t0.4\t0.5\tempirical\n"
+                     "rs2\t1\t200\tA\tG\t0.1\t0.3\t0.4\thwe\n")
+    with pytest.raises(ValueError, match="mixes SD_SOURCE"):
+        read_weights(mixed)
+
+
 def test_reanchor_on_identifier_moves_and_drops():
     ref = Variants(chrom=np.array(["1", "1", "2"], dtype=object),
                    id=np.array(["rs1", "rs2", "rs2"], dtype=object),
