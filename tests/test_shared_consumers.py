@@ -25,15 +25,65 @@ def test_implied_n_preserves_both_nonpositive_estimate_policies():
     assert implied_sample_size(*args, binary=True, strict=True)["median"] == pytest.approx(-8.)
 
 
+def _binary_sumstats(n_eff, n_variants=5000, seed=0):
+    """Case/control sumstats whose implied N is ``n_eff`` by construction."""
+    rng = np.random.default_rng(seed)
+    af = rng.uniform(0.05, 0.95, n_variants)
+    sd_ref = np.sqrt(2 * af * (1 - af))
+    beta = rng.standard_normal(n_variants) * 1e-3
+    se = np.sqrt(np.maximum(4.0 / sd_ref**2 - beta**2, 1e-12) / n_eff)
+    return beta, se, af
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_implied_n_recovers_a_scalar_n_and_flags_an_overstated_one(strict):
+    """The absolute N is recoverable for case/control (bipred uses strict=True)."""
+    beta, se, af = _binary_sumstats(80_000.0, seed=3)
+    out = implied_sample_size(beta, se, af, binary=True, reported_n=80_000.0, strict=strict)
+    assert abs(out["median"] - 80_000.0) / 80_000.0 < 0.02
+    assert out["consistent"] is True
+    # CARDIoGRAM CAD: reported 162,973, implied 92,966, ratio 0.570.
+    beta, se, af = _binary_sumstats(92_966.0, seed=4)
+    out = implied_sample_size(beta, se, af, binary=True, reported_n=162_973.0, strict=strict)
+    assert out["median"] == pytest.approx(92_966.0, rel=1e-3)
+    assert out["ratio"] == pytest.approx(0.570, abs=0.01)
+    assert out["consistent"] is False
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_quantitative_implied_n_is_unidentified(strict):
+    """A quantitative trait's phenotype scale is unknown: calibrating it from
+    reported_n would force the ratio to one, so nothing is reported."""
+    beta, se, af = _binary_sumstats(80_000.0, seed=5)
+    for reported in (80_000.0, 720_000.0):
+        out = implied_sample_size(beta, se, af, reported_n=reported, strict=strict)
+        assert np.isnan(out["median"]) and np.isnan(out["ratio"])
+        assert out["consistent"] is False
+
+
 @pytest.mark.parametrize("binary", [False, True])
-@pytest.mark.parametrize("field,value", [
-    ("beta", [np.nan, 0.]), ("se", [0., 1.]), ("af", [0., .5]),
-    ("reported_n", [1., np.inf]), ("reported_n", [1.]),
+@pytest.mark.parametrize("field,value,match", [
+    ("beta", [np.nan, 0.], "beta contains non-finite"),
+    ("se", [0., 1.], "se must contain finite positive"),
+    ("se", [np.nan, 1.], "se must contain finite positive"),
+    ("af", [0., .5], "af must contain finite values"),
+    ("af", [np.nan, .5], "af must contain finite values"),
+    ("af", [1., .5], "af must contain finite values"),
+    ("af", [2., .5], "af must contain finite values"),
+    ("beta", [[0.], [0.]], "equal-length vectors"),
+    ("se", [[1.], [1.]], "equal-length vectors"),
+    ("af", [[.5], [.5]], "equal-length vectors"),
+    ("reported_n", [1., np.inf], "finite positive"),
+    ("reported_n", [1.], "scalar or a vector matching beta"),
+    ("reported_n", 0., "finite positive"),
+    ("reported_n", -1., "finite positive"),
+    ("reported_n", np.nan, "finite positive"),
+    ("reported_n", np.inf, "finite positive"),
 ])
-def test_strict_implied_n_validates_before_reporting_unidentified(binary, field, value):
+def test_strict_implied_n_validates_before_reporting_unidentified(binary, field, value, match):
     args = dict(beta=[0., 0.], se=[1., 1.], af=[.5, .5], reported_n=[10., 10.])
     args[field] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=match):
         implied_sample_size(**args, binary=binary, strict=True)
 
 

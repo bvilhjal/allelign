@@ -1,11 +1,16 @@
-"""allelign reproduces ldpred3 on the inputs ldpred3 already handles.
+"""ldpred3 reads, aligns and screens through allelign: the seam between them.
 
-This is the gate for moving ldpred3 (and its siblings) onto allelign: for the
-same input, every ported function must return the same output, bit for bit.
-Skipped when ldpred3 is not installed.
+Two kinds of check, both skipped when ldpred3 is not installed:
+
+* names ldpred3 re-exports must *be* allelign's objects (an identity, not a
+  bit-for-bit comparison of a function with itself). ldpred3's own suite no
+  longer re-tests them, so a re-export that turns into a local copy fails here;
+* ldpred3's own wrappers -- ``harmonize``/``qc_sumstats``/``sd_consistency_mask``
+  with ``reasons=``, the split-half screen on ldpred3's float32 eigensolver and
+  BLAS gate, ``read_weights``/``write_pgs_scoring_file`` and re-anchoring --
+  must return what allelign returns on the same input, bit for bit.
 """
 
-import gzip
 import importlib
 import warnings
 
@@ -15,24 +20,80 @@ import pytest
 pytest.importorskip("ldpred3")
 pytestmark = pytest.mark.parity
 
-L_ss = importlib.import_module("ldpred3.sumstats")
 L_h = importlib.import_module("ldpred3.harmonize")
 L_qc = importlib.import_module("ldpred3.qc")
 L_w = importlib.import_module("ldpred3.weights")
-L_st = importlib.import_module("ldpred3._qc_status")
 
 import allelign.align as A_h                       # noqa: E402
 import allelign.qc as A_qc                         # noqa: E402
 import allelign.status as A_st                     # noqa: E402
 import allelign.sumstats as A_ss                   # noqa: E402
 import allelign.weights as A_w                     # noqa: E402
-from allelign.alleles import (allele_orientation, is_ambiguous,  # noqa: E402
-                              normalize_chrom)
 from allelign.ldcheck import ld_consistency_screen  # noqa: E402
 from allelign.variants import Variants             # noqa: E402
 
-FIELDS = ("id", "chrom", "pos", "ea", "oa", "beta", "se", "n_eff", "eaf",
-          "info")
+
+REEXPORTS = [  # (ldpred3 module, its name, allelign module, allelign name)
+    ("sumstats", "read_sumstats", "sumstats", "read_sumstats"),
+    ("sumstats", "detect_columns", "sumstats", "detect_columns"),
+    ("sumstats", "rescale_n_eff", "sumstats", "rescale_n_eff"),
+    ("sumstats", "Sumstats", "sumstats", "Sumstats"),
+    ("sumstats", "COLUMN_ALIASES", "sumstats", "COLUMN_ALIASES"),
+    ("sumstats", "_ALIASES", "sumstats", "COLUMN_ALIASES"),
+    ("sumstats", "_SUMSTATS_FIELDS", "sumstats", "_SUMSTATS_FIELDS"),
+    ("sumstats", "ColumnMappingError", "sumstats", "ColumnMappingError"),
+    ("sumstats", "_rescale_or_constant_n", "sumstats", "anchor_n_eff"),
+    ("prepare", "n_eff_case_control", "sumstats", "n_eff_case_control"),
+    ("harmonize", "Harmonized", "align", "Harmonized"),
+    ("harmonize", "diagnose_match", "align", "diagnose_match"),
+    ("harmonize", "reference_coverage", "align", "reference_coverage"),
+    ("harmonize", "_reference_coverage", "align", "_reference_coverage"),
+    ("harmonize", "coverage_message", "align", "coverage_message"),
+    ("harmonize", "REFERENCE_COVERAGE_WARN", "align", "REFERENCE_COVERAGE_WARN"),
+    ("harmonize", "SEVERE_REFERENCE_COVERAGE", "align", "SEVERE_REFERENCE_COVERAGE"),
+    ("harmonize", "BUILD_MISMATCH_FRACTION", "align", "BUILD_MISMATCH_FRACTION"),
+    ("harmonize", "variant_indices", "align", "_variant_indices"),
+    ("harmonize", "_variant_indices", "align", "_variant_indices"),
+    ("harmonize", "_vector_columns", "align", "_vector_columns"),
+    ("harmonize", "_harmonize_vector", "align", "_harmonize_vector"),
+    ("harmonize", "_harmonize_rows", "align", "_harmonize_rows"),
+    ("harmonize", "_ReferenceLoci", "align", "_ReferenceLoci"),
+    ("harmonize", "_CACHE_ATTR", "align", "_CACHE_ATTR"),
+    ("harmonize", "_INDEX_CACHE_LOCK", "align", "_INDEX_CACHE_LOCK"),
+    ("harmonize", "_norm_chrom", "alleles", "normalize_chrom"),
+    ("harmonize", "_ambiguous_pair", "alleles", "is_ambiguous"),
+    ("harmonize", "_allele_orientation", "alleles", "allele_orientation"),
+    ("harmonize", "_complement", "alleles", "reverse_complement"),
+    ("qc", "dentist_statistic", "ldcheck", "dentist_statistic"),
+    ("qc", "_window_ld", "ldcheck", "_window_ld"),
+    ("qc", "_precision_apply", "ldcheck", "_precision_apply"),
+    ("qc", "_SplitHalfWindows", "ldcheck", "_SplitHalfWindows"),
+    ("qc", "_split_half_tiles", "ldcheck", "_split_half_tiles"),
+    ("qc", "af_concordance_mask", "qc", "af_concordance_mask"),
+    ("qc", "gwas_af_on_counted_allele", "qc", "gwas_af_on_counted_allele"),
+    ("qc", "genomic_control_factor", "qc", "genomic_control_factor"),
+    ("qc", "implied_sample_size", "qc", "implied_sample_size"),
+    ("qc", "impute_n_eff", "qc", "impute_n_eff"),
+    ("qc", "should_impute_n", "qc", "should_impute_n"),
+    ("weights", "write_weights", "weights", "write_weights"),
+    ("weights", "WeightsTable", "weights", "WeightsTable"),
+    ("weights", "PGS_BUILDS", "weights", "PGS_BUILDS"),
+    ("weights", "SD_SOURCES", "weights", "SD_SOURCES"),
+    ("_qc_status", "QC_REASON_NAMES", "status", "QC_REASON_NAMES"),
+    ("_qc_status", "QC_OUT_HEADER", "status", "STATUS_HEADER"),
+    ("_qc_status", "qc_status_counts", "status", "status_counts"),
+    ("_qc_status", "write_qc_status_table", "status", "write_status_table"),
+]
+
+
+@pytest.mark.parametrize("ldpred3_module,name,allelign_module,allelign_name",
+                         REEXPORTS, ids=[f"{m}.{n}" for m, n, _, _ in REEXPORTS])
+def test_ldpred3_reexports_are_allelign_objects(ldpred3_module, name,
+                                                allelign_module, allelign_name):
+    ours = getattr(importlib.import_module(f"allelign.{allelign_module}"),
+                   allelign_name)
+    theirs = getattr(importlib.import_module(f"ldpred3.{ldpred3_module}"), name)
+    assert theirs is ours
 
 
 def _same_array(x, y, name=""):
@@ -44,109 +105,6 @@ def _same_array(x, y, name=""):
                                       err_msg=name)
     else:
         assert list(x) == list(y), name
-
-
-def _same_sumstats(a, b):
-    for f in FIELDS:
-        _same_array(getattr(a, f), getattr(b, f), f)
-    for key in ("n_input", "n_se_from_pval"):
-        assert a.parse_log[key] == b.parse_log[key], key
-
-
-def _messy_rows(rng, n):
-    toks = ["NA", "", ".", "nan", "1e-300", "-0", "3.2E+04"]
-    rows = []
-    for i in range(n):
-        def num(scale=1.0):
-            if rng.random() < 0.05:
-                return toks[rng.integers(len(toks))]
-            return f"{rng.normal() * scale:.6g}"
-        p = (f"{10 ** -rng.uniform(0, 330):.3g}" if rng.random() < 0.9
-             else toks[rng.integers(len(toks))])
-        rows.append([f"rs{i}" if rng.random() > 0.02 else "",
-                     str(rng.integers(1, 24)), str(rng.integers(1, 10 ** 8)),
-                     "ACGT"[rng.integers(4)], "acgt"[rng.integers(4)],
-                     num(0.05), (num(0.01).lstrip("-") if rng.random() > 0.2
-                                 else "NA"), p,
-                     str(rng.integers(5000, 9000)),
-                     f"{rng.uniform(0, 1):.4f}", f"{rng.uniform(0.3, 1):.3f}"])
-    return rows
-
-
-def _write(path, header, rows, delim="\t", gz=False):
-    text = delim.join(header) + "\n" + "\n".join(delim.join(r) for r in rows) + "\n"
-    if gz:
-        with gzip.open(path, "wt") as fh:
-            fh.write(text)
-    else:
-        path.write_text(text)
-    return str(path)
-
-
-DIALECTS = {
-    "plain": (["SNP", "CHR", "BP", "A1", "A2", "BETA", "SE", "P", "N", "EAF",
-               "INFO"], "\t", {}),
-    "or_whitespace": (["SNP", "CHR", "BP", "A1", "A2", "OR", "SE", "P", "N",
-                       "FRQ", "INFO"], " ", {}),
-    "comma_gwas_ssf": (["rsid", "chromosome", "base_pair_location",
-                        "effect_allele", "other_allele", "beta",
-                        "standard_error", "p_value", "n",
-                        "effect_allele_frequency", "info"], ",", {}),
-    "metal": (["MarkerName", "Chr", "Pos", "Allele1", "Allele2", "Effect",
-               "StdErr", "P-value", "N", "Freq1", "Rsq"], "\t", {}),
-}
-
-
-@pytest.mark.parametrize("dialect", sorted(DIALECTS))
-@pytest.mark.parametrize("gz", [False, True])
-def test_read_sumstats_matches_ldpred3(tmp_path, dialect, gz):
-    header, delim, kw = DIALECTS[dialect]
-    rows = _messy_rows(np.random.default_rng(len(dialect)), 400)
-    if delim == " ":
-        rows = [[t or "NA" for t in r] for r in rows]
-    if header[5] == "OR":
-        for r in rows:
-            try:
-                r[5] = f"{np.exp(min(float(r[5]), 50.0)):.6g}"
-            except ValueError:
-                pass
-    path = _write(tmp_path / ("f.txt.gz" if gz else "f.txt"), header, rows,
-                  delim, gz)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        _same_sumstats(A_ss.read_sumstats(path, **kw),
-                       L_ss.read_sumstats(path, **kw))
-        _same_sumstats(A_ss.read_sumstats(path, n_eff=1234.0),
-                       L_ss.read_sumstats(path, n_eff=1234.0))
-
-
-@pytest.mark.numba
-def test_jit_block_parser_matches_ldpred3(tmp_path):
-    header, delim, _ = DIALECTS["plain"]
-    rows = _messy_rows(np.random.default_rng(7), 60_000)   # > 2 MB of text
-    path = _write(tmp_path / "big.tsv", header, rows, delim)
-    _same_sumstats(A_ss.read_sumstats(path), L_ss.read_sumstats(path))
-
-
-def test_column_aliases_extend_ldpred3s_in_order():
-    for field, aliases in L_ss.COLUMN_ALIASES.items():
-        assert A_ss.COLUMN_ALIASES[field][:len(aliases)] == aliases, field
-
-
-def test_allele_primitives_match():
-    labels = ["chr1", "01", "1", "X", "23", "25", "XY", "chrX", "24", "Y",
-              "26", "M", "MT", "chrM", " 7 ", "chr", "", "Un"]
-    for c in labels:
-        assert normalize_chrom(c) == L_h._norm_chrom(c), c
-    alleles = ["A", "C", "G", "T", "AT", "CG", "AA", "TT", "ACG", "CGT", "N",
-               "AN", "I", "D"]
-    for x in alleles:
-        for y in alleles:
-            assert is_ambiguous(x, y) == L_h._ambiguous_pair(x, y), (x, y)
-            for g1 in ("A", "C", "AA", "TT"):
-                for g2 in ("G", "T", "CGT"):
-                    assert (allele_orientation(x, y, g1, g2)
-                            == L_h._allele_orientation(x, y, g1, g2))
 
 
 def _random_grid(rng, nv=300, ns=500):
@@ -203,9 +161,6 @@ def test_harmonize_matches_ldpred3(seed, drop):
     A_h.harmonize(ss, Variants(**cols), drop_ambiguous=drop, status=sa)
     L_h.harmonize(ss, Variants(**cols), drop_ambiguous=drop, reasons=rb)
     np.testing.assert_array_equal(sa, rb)
-    cov_a = A_h.reference_coverage(ss, va, a)
-    cov_b = L_h.reference_coverage(ss, vb, b)
-    assert cov_a == cov_b
 
 
 def _random_sumstats(rng, n=3000):
@@ -244,7 +199,7 @@ def test_qc_sumstats_matches_ldpred3(anchor):
 
 
 @pytest.mark.parametrize("rule", ["ratio", "prive"])
-def test_reference_checks_match_ldpred3(rule):
+def test_sd_consistency_mask_matches_ldpred3(rule):
     rng = np.random.default_rng(2)
     m = 4000
     af = rng.uniform(0.01, 0.99, m)
@@ -264,26 +219,6 @@ def test_reference_checks_match_ldpred3(rule):
         A_qc.sd_consistency_mask(beta, se, n, af, rule=rule, status=sa, **kwargs)
         L_qc.sd_consistency_mask(beta, se, n, af, rule=rule, reasons=rb, **kwargs)
         np.testing.assert_array_equal(sa, rb)
-    af_gwas = np.clip(af + rng.normal(0, 0.05, m), 0, 1)
-    for gwas in (af_gwas, 1 - af):          # valve off, valve on (mirrored)
-        a = A_qc.af_concordance_mask(gwas, af)
-        b = L_qc.af_concordance_mask(gwas, af)
-        np.testing.assert_array_equal(a[0], b[0])
-        assert a[1] == b[1]
-    a = A_qc.impute_n_eff(se, af, 1e5, info=info)
-    b = L_qc.impute_n_eff(se, af, 1e5, info=info)
-    _same_array(a[0], b[0])
-    assert a[1] == b[1]
-    for args in ((0.9, 0.02), (0.99, 0.02), (1.1, 0.01), (0.8, 0.5)):
-        assert (A_qc.genomic_control_factor(*args, n_variants=60_000)
-                == L_qc.genomic_control_factor(*args, n_variants=60_000))
-    assert (A_qc.implied_sample_size(beta, se, af, binary=True, reported_n=1e5)
-            == L_qc.implied_sample_size(beta, se, af, binary=True,
-                                        reported_n=1e5))
-    for value in (True, False, None):
-        for nvec in (np.full(5, 1e4), np.arange(5.0)):
-            assert (A_qc.should_impute_n(value, nvec)
-                    == L_qc.should_impute_n(value, nvec))
 
 
 def _ar1(m, rho):
@@ -335,10 +270,8 @@ def test_weights_and_pgs_export_match_ldpred3(tmp_path):
               other_allele=["G"] * n, weight=rng.normal(0, 0.01, n),
               af=rng.uniform(0.05, 0.95, n), sd=rng.uniform(0.2, 0.7, n),
               sd_source="hwe")
-    pa, pb = tmp_path / "a.tsv", tmp_path / "b.tsv"
+    pa = tmp_path / "a.tsv"
     A_w.write_weights(pa, **kw)
-    L_w.write_weights(pb, **kw)
-    assert pa.read_bytes() == pb.read_bytes()
     wa, wb = A_w.read_weights(pa), L_w.read_weights(pa)
     for f in ("id", "chrom", "pos", "a1", "a2", "weight", "af_ref", "sd_ref"):
         _same_array(getattr(wa, f), getattr(wb, f), f)
@@ -352,10 +285,6 @@ def test_weights_and_pgs_export_match_ldpred3(tmp_path):
         return [line for line in path.read_text().splitlines()
                 if not line.startswith("#")]
     assert body(tmp_path / "a.pgs") == body(tmp_path / "b.pgs")
-
-
-def test_status_vocabulary_matches_ldpred3():
-    assert A_st.QC_REASON_NAMES == L_st.QC_REASON_NAMES
 
 
 def test_selected_and_pooled_screens_match_ldpred3():
@@ -378,7 +307,7 @@ def test_selected_and_pooled_screens_match_ldpred3():
             L_qc.ld_consistency_screen(blocks, z, seed=1))
 
 
-def test_coverage_reports_and_reanchoring_match_ldpred3():
+def test_reanchoring_matches_ldpred3():
     L_prep = importlib.import_module("ldpred3.prepare")
     n = 300
     ids = np.array([f"rs{i}" for i in range(n)], dtype=object)
@@ -394,13 +323,6 @@ def test_coverage_reports_and_reanchoring_match_ldpred3():
                        info=np.full(n, np.nan))
     ss.id[:5] = ""
     va, vb = Variants(**cols), Variants(**{k: v.copy() for k, v in cols.items()})
-    ha, hb = A_h.harmonize(ss, va), L_h.harmonize(ss, vb)
-    for kw in ({}, {"n_invalid": 400}, {"n_qc_dropped": 500}):
-        ca = A_h._reference_coverage(ss, va, ha, **kw)
-        cb = L_h._reference_coverage(ss, vb, hb, **kw)
-        assert ca == cb
-        assert A_h.coverage_message(ca, n_invalid=kw.get("n_invalid", 0)) == \
-            L_h.coverage_message(cb, n_invalid=kw.get("n_invalid", 0))
     with warnings.catch_warnings(record=True) as wa:
         warnings.simplefilter("always")
         out_a, log_a, keep_a = A_h.reanchor_on_identifier(

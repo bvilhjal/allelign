@@ -103,7 +103,8 @@ def test_gwas_catalog_harmonised_uses_the_hm_set(tmp_path, jit):
                        "1\t752721\tG\tA\t0.8\t0.1\t0.01\t900\trs3131972\t817341\t"
                        "A\tG\t-0.1\n", name="no_hm_eaf.tsv")
     ss = read_sumstats(no_hm_eaf)
-    assert list(ss.ea) == ["A"] and np.isnan(ss.eaf[0])
+    assert list(ss.ea) == ["A"] and list(ss.oa) == ["G"] and np.isnan(ss.eaf[0])
+    np.testing.assert_allclose(ss.beta, [-0.1])
     assert "eaf_dropped" in ss.parse_log["layout"]
 
 
