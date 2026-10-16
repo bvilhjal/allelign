@@ -33,7 +33,7 @@ from .alleles import normalize_chrom
 
 __all__ = ["WeightsTable", "write_weights", "read_weights", "ScoringFile",
            "read_scoring_file", "write_pgs_scoring_file", "SD_SOURCES",
-           "PGS_BUILDS"]
+           "PGS_BUILDS", "SCORING_COLUMNS"]
 
 #: Values of ``SD_SOURCE``: observed in the fit cohort, or the HWE value
 #: ``sqrt(2f(1-f))`` used by producers that never see a fit cohort.
@@ -260,7 +260,7 @@ def read_weights(path, *, sd_source=None, warn_missing_sd_source=True):
 # ---------------------------------------------------------------------------
 
 #: Column name -> canonical field. Harmonised names win over the originals.
-_SCORING_COLUMNS = {
+SCORING_COLUMNS = {
     "id": ("hm_rsid", "rsid", "rsids", "snpid", "variant_id"),
     "chrom": ("hm_chr", "chr_name", "chromosome", "chr"),
     "pos": ("hm_pos", "chr_position", "position", "bp"),
@@ -268,6 +268,8 @@ _SCORING_COLUMNS = {
     "oa": ("other_allele", "hm_inferotherallele", "a2"),
     "weight": ("effect_weight", "weight", "beta"),
 }
+# Compatibility for early consumers; new code uses SCORING_COLUMNS.
+_SCORING_COLUMNS = SCORING_COLUMNS
 _NON_ADDITIVE = ("is_dominant", "is_recessive", "is_haplotype", "is_diplotype",
                  "is_interaction")
 _RATIO_WEIGHTS = ("or", "hr", "odds_ratio", "hazard_ratio")
@@ -379,7 +381,7 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
         if header is None:
             raise ValueError(f"{path}: no column header found (only comment lines)")
         idx, used = {}, {}
-        for field_name, names in _SCORING_COLUMNS.items():
+        for field_name, names in SCORING_COLUMNS.items():
             candidates = names if prefer_harmonized else \
                 tuple(n for n in names if not n.startswith("hm_")) + names
             i, chosen = _pick(header, candidates)

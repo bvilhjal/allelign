@@ -7,11 +7,12 @@ number. NumPy-only; Numba and SciPy speed up the parser and the LD screen when
 installed.
 """
 
-__version__ = "0.1.0.dev5"
+__version__ = "0.1.0.dev6"
 
 from .alleles import (allele_orientation, is_ambiguous, normalize_chrom,
                       reverse_complement)
 from .build import BuildMismatchError, check_build, normalize_build
+from .catalog import resolve_gwas_catalog_columns
 from .genotypes import Bed, ld_consistency_screen_genotypes
 from .align import (Harmonized, HarmonizedWeights,
                     count_positional_only_matches, coverage_message,
@@ -32,12 +33,12 @@ from .sumstats import (ColumnMappingError, Sumstats, anchor_n_eff,
                        detect_columns, inspect_columns, n_eff_case_control,
                        read_sumstats, rescale_n_eff, write_sumstats)
 from .variants import Variants, read_bim, read_pvar, read_variants
-from .weights import (ScoringFile, WeightsTable, read_scoring_file,
+from .weights import (SCORING_COLUMNS, ScoringFile, WeightsTable, read_scoring_file,
                       read_weights, scoring_file_id, write_pgs_scoring_file,
                       write_weights)
 
 __all__ = [
-    "__version__",
+    "__version__", "SCORING_COLUMNS", "resolve_gwas_catalog_columns",
     # reading and writing
     "Sumstats", "read_sumstats", "write_sumstats", "detect_columns",
     "inspect_columns", "ColumnMappingError", "n_eff_case_control",

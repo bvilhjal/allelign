@@ -4,6 +4,29 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0.dev6] - 2026-10-16
+
+### Added
+
+- Header-only `resolve_gwas_catalog_columns` for streamed Catalog normalisers,
+  including provider overrides, OR/z-score fallback columns and the rule
+  against pairing submitted frequencies with harmonised alleles.
+- Public `SCORING_COLUMNS` for PGS download validators. The old private name
+  remains an alias for early consumers.
+- Per-variant `reported_n` and an explicit `strict=True` policy in
+  `implied_sample_size`, preserving bipred's input checks, arithmetic and
+  median over all implied estimates. The default still uses positive finite
+  estimates; both compare against the median reported N.
+- Legacy benchmark aliases (`SNPname`, `logOR`, `hm_standard_error`,
+  `samplesize`, `n_sample`, `total_sample_size`) in the shared GWAS vocabulary.
+
+### Fixed
+
+- Long-range LD masks preserve scalar and multidimensional input shapes while
+  normalising chromosome labels. Region endpoints remain inclusive.
+- `implied_sample_size` rejects nonboolean `binary` controls and mismatched
+  `reported_n` vectors instead of relying on array truth values.
+
 ## [0.1.0.dev5] - 2026-10-13
 
 ### Fixed

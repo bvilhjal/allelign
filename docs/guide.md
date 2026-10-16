@@ -21,6 +21,14 @@
 | Neale UKB | `variant` = `chr:pos:ref:alt`, effect on ALT |
 | FinnGen | `alt` is the effect allele, `af_alt` the EAF |
 
+`resolve_gwas_catalog_columns(header, extra_aliases=None)` serves streamed
+Catalog normalisers. It returns the normalised-name mapping and the OR and
+z-score fallback columns; provider aliases take priority. Its deposit schema
+keeps reported total N distinct from effective N. The normaliser owns row
+filtering, effect recovery and the study's sample-size policy. A submitted
+frequency is not used with harmonised alleles unless its harmonised counterpart
+is available.
+
 ### Sample size
 
 Per-variant N comes from, in order:
@@ -71,7 +79,11 @@ Diagnostics that drop nothing:
 
 - `impute_n_eff`: per-variant N (Privé et al. 2022).
 - `genomic_control_factor`: undoes genomic control when the LDSC intercept is established below 1.
-- `implied_sample_size`: binary traits only.
+- `implied_sample_size`: binary traits only; scalar or per-variant `reported_n`,
+  with a ratio of medians. The default median excludes nonpositive/nonfinite
+  estimates. `strict=True` preserves bipred's policy: reject invalid input
+  rows, then take the median of all estimates, including nonpositive ones.
+  Quantitative-trait absolute N remains unidentified under either policy.
 - `genomic_inflation`: λGC.
 - `in_long_range_ld`: GRCh37 regions; any other build refuses unless you pass `regions=`.
 
@@ -97,7 +109,8 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
 ## 4. PGS effect sizes
 
 - **ldpred3 tables** (`read_weights`/`write_weights`) hold standardised weights, with optional `AF_REF SD_REF SD_SOURCE`.
-- **PGS Catalog files** (`read_scoring_file`):
+- **PGS Catalog files** (`read_scoring_file`; public header vocabulary
+  `SCORING_COLUMNS` for download validators):
   - weights are per allele count;
   - `hm_` columns are preferred, and `hm_inferOtherAllele` fills a missing other allele;
   - OR/HR weights are logged;

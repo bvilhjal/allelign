@@ -474,7 +474,8 @@ def genomic_control_factor(intercept, intercept_se, *, min_z=2.0,
     return float(np.sqrt(intercept))
 
 
-def implied_sample_size(beta, se, af, *, binary=False, reported_n=None):
+def implied_sample_size(beta, se, af, *, binary=False, reported_n=None,
+                        strict=False):
     """Effective N the statistics behave as if they had (binary traits).
 
     Solving ``sd_ss == sd_ref`` gives ``n = (c^2/(2f(1-f)) - beta^2) / se^2``
@@ -483,27 +484,53 @@ def implied_sample_size(beta, se, af, *, binary=False, reported_n=None):
     scale is unidentified, so ``median``/``ratio`` are NaN there.
 
     Returns ``{"median", "ratio", "consistent"}`` (ratio to ``reported_n``,
-    consistent when within 0.9-1.1).
+    consistent when within 0.9-1.1). ``reported_n`` may be a positive scalar
+    or a vector matching beta; the ratio uses its median.
+
+    By default, only finite positive implied estimates enter the median.
+    ``strict=True`` preserves bipred's diagnostic: reject malformed inputs
+    (including for quantitative traits), then take the median of *all*
+    implied estimates, including nonpositive ones. This distinguishes input
+    validation from deciding which estimates describe a plausible N.
     """
+    validate_boolean(binary=binary, strict=strict)
     beta = np.asarray(beta, dtype=np.float64)
     se = np.asarray(se, dtype=np.float64)
     af = np.asarray(af, dtype=np.float64)
     if (beta.ndim != 1 or se.ndim != 1 or af.ndim != 1 or beta.size == 0
             or se.shape != beta.shape or af.shape != beta.shape):
         raise ValueError("beta, se and af must be non-empty equal-length vectors")
+    if strict:
+        if not np.all(np.isfinite(beta)):
+            raise ValueError("beta contains non-finite values; filter them first")
+        if not np.all(np.isfinite(se)) or np.any(se <= 0):
+            raise ValueError("se must contain finite positive values")
+        if not np.all(np.isfinite(af)) or np.any((af <= 0) | (af >= 1)):
+            raise ValueError("af must contain finite values strictly between 0 and 1")
+    reported = None
+    if reported_n is not None:
+        reported = np.asarray(reported_n, dtype=np.float64)
+        if reported.ndim != 0 and reported.shape != beta.shape:
+            raise ValueError("reported_n must be a scalar or a vector matching beta")
+        if not np.all(np.isfinite(reported)) or np.any(reported <= 0):
+            if strict:
+                raise ValueError("reported_n must contain finite positive values")
+            reported = None
     if not binary:
         return {"median": float("nan"), "ratio": float("nan"),
                 "consistent": False}
     var = 2.0 * af * (1.0 - af)
+    if strict:
+        # Preserve the rounding of bipred's historical sd_ref ** 2 formula.
+        var = np.sqrt(var) ** 2
     with np.errstate(divide="ignore", invalid="ignore"):
         implied = (4.0 / var - beta ** 2) / se ** 2
-    good = np.isfinite(implied) & (implied > 0)
-    if not good.any():
+    estimates = implied if strict else implied[np.isfinite(implied) & (implied > 0)]
+    if estimates.size == 0:
         return {"median": float("nan"), "ratio": float("nan"),
                 "consistent": False}
-    median = float(np.median(implied[good]))
-    ratio = (median / float(reported_n)
-             if reported_n and np.isfinite(reported_n) and reported_n > 0
+    median = float(np.median(estimates))
+    ratio = (median / float(np.median(reported)) if reported is not None
              else float("nan"))
     return {"median": median, "ratio": ratio,
             "consistent": bool(np.isfinite(ratio) and 0.9 <= ratio <= 1.1)}
@@ -597,9 +624,9 @@ def in_long_range_ld(chrom, pos, *, genome_build="GRCh37", include_apoe=False,
     pos = np.asarray(pos, dtype=np.int64)
     if labels.shape != pos.shape:
         raise ValueError("chrom and pos must have the same shape")
-    memo = {}
-    norm = np.array([memo.setdefault(c, normalize_chrom(c)) for c in labels],
-                    dtype=object)
+    memo = {c: normalize_chrom(c) for c in set(labels.ravel())}
+    norm = np.array([memo[c] for c in labels.ravel()],
+                    dtype=object).reshape(labels.shape)
     inside = np.zeros(pos.shape, dtype=bool)
     for name, start, end, _label in regions:
         inside |= (norm == normalize_chrom(name)) & (pos >= start) & (pos <= end)

@@ -83,10 +83,11 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
 
 ## Consumers
 
-- **ldpred3** (0.9.9) reads, aligns, QCs and writes weights through allelign. Its modules re-export allelign under their old names, so sibling imports keep working. It keeps the pipeline-specific parts: whole-block DENTIST with low-rank Woodbury updates, the BLAS gate for a pooled screen, its float32 eigensolver (passed to the screen), and the qc_log report blocks. allelign's parity tests are the contract.
+- **ldpred3** reads, aligns, QCs and writes weights through allelign. Its modules re-export allelign under their old names, so sibling imports keep working. It keeps the pipeline-specific parts: whole-block DENTIST with low-rank Woodbury updates, the BLAS gate for a pooled screen, its float32 eigensolver (passed to the screen), and the qc_log report blocks. allelign's parity tests are the contract.
 - **ppb** takes chromosome labels, reverse complements and strand ambiguity from `allelign.alleles` and keeps its own position-only join.
-- **bipred, gwfm, multipgs and SMARTpred** import reading, alignment, QC and weight-file I/O from allelign directly. multipgs reads PGS Catalog files with `read_scoring_file`. They still take LD caches, prepared traits, the fit, ldpred3's screen and its n_eff report helpers from ldpred3.
+- **bipred** takes the region table, long-range mask, strict implied-N diagnostic and weight-file I/O from allelign. Its wrapper includes APOE by default; its LDpred2-style SD diagnostic stays in bipred. Trait preparation still goes through ldpred3.
+- **gwfm, multipgs and SMARTpred** use allelign for reading, alignment, QC and weight-file I/O. multipgs aligns both scoring files and fitted weights with `harmonize_weights`. SMARTpred and the LDpred3 harvester share the header-only `resolve_gwas_catalog_columns` rules while retaining streamed filtering. LD caches, prepared traits, the fit and pipeline reports stay in ldpred3.
 
 ## Status
 
-Version 0.1.0.dev5. Private, not on PyPI. MIT licence.
+Version 0.1.0.dev6. Private, not on PyPI. MIT licence.
