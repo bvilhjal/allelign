@@ -40,6 +40,12 @@ Per-variant N comes from, in order:
 
 `parse_log["n_eff_source"]` records which. For a meta-analysis, effective N from summed counts overstates the true value when case fractions differ between cohorts; prefer a published `Neff`. `anchor_n_eff(ss, target)` rescales a per-variant column's median down to a supplied N, and never scales it up.
 
+`inspect_columns(path, n_eff=...)` uses the same sample-size arguments and
+precedence as `read_sumstats`, without reading data rows. It reports `n_eff`
+in `missing` when no N source resolves. On the CLI, supply constants with
+`allelign inspect gwas.tsv --n-eff 10000` or `--n-cases 2000 --n-controls 8000`;
+use `--column n_eff=Neff` to select a column.
+
 ## 2. Alignment
 
 `harmonize(ss, variants)` aligns effects to the reference's counted allele `a1`. The rules, in order:

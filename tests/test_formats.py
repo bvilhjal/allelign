@@ -1,5 +1,6 @@
 """Formats and N rules beyond ldpred3's reader."""
 
+import io
 import math
 import warnings
 
@@ -268,6 +269,66 @@ def test_inspect_columns_reports_layout_and_gaps(tmp_path):
     info = inspect_columns(path)
     assert set(info["missing"]) == {"oa", "se/pval"}
     assert info["n_source"] == "column:n"
+
+
+def test_inspect_columns_reports_missing_n(tmp_path):
+    path = _write(tmp_path, "SNP A1 A2 BETA SE\nrs1 A G 0.1 0.01\n")
+    assert inspect_columns(path)["missing"] == ["n_eff"]
+    with pytest.raises(ValueError, match="no sample-size column"):
+        read_sumstats(path)
+
+
+@pytest.mark.parametrize("options,expected", [
+    ({"n_eff": 1000}, 1000),
+    ({"n_cases": 2000, "n_controls": 8000}, 6400),
+    ({"n_eff": "N"}, 10000),
+    ({"n_eff": "5"}, 10000),
+    ({"n_eff": 1000, "n_cases": "CasesCustom"}, 1000),
+])
+def test_inspect_and_read_share_n_arguments(tmp_path, options, expected):
+    path = _write(tmp_path, "SNP A1 A2 BETA SE N CasesCustom\n"
+                  "rs1 A G 0.1 0.01 10000 2000\n")
+    info = inspect_columns(path, **options)
+    ss = read_sumstats(path, **options)
+    assert info["missing"] == []
+    assert info["n_source"] == ss.parse_log["n_eff_source"]
+    assert ss.n_eff[0] == expected
+
+
+@pytest.mark.parametrize("options,match", [
+    ({"n_cases": 2000}, "given together"),
+    ({"n_cases": 2000, "n_controls": "N"}, "given together"),
+    ({"n_eff": 1000, "n_cases": 2000, "n_controls": 8000}, "not both"),
+    ({"n_eff": 0}, "finite positive"),
+    ({"n_eff": np.nan}, "finite positive"),
+    ({"n_eff": True}, "finite positive"),
+])
+def test_inspect_and_read_reject_invalid_n_arguments(tmp_path, options, match):
+    path = _write(tmp_path, "SNP A1 A2 BETA SE N\nrs1 A G 0.1 0.01 10000\n")
+    for read in (inspect_columns, read_sumstats):
+        with pytest.raises(ValueError, match=match):
+            read(path, **options)
+
+
+@pytest.mark.parametrize("delim", ["\t", ","])
+@pytest.mark.parametrize("block_fallback", [False, True])
+def test_crlf_header_and_reference_parser(delim, block_fallback):
+    # Raw CRLF can reach these helpers directly; disk reads normalise it first.
+    text = delim.join(["A1", "A2", "BETA", "SE", "N", "SNP"]) + "\r\n"
+    text += delim.join(["A", "G", "0.1", "0.01", "1000", "rs1"]) + "\r\n"
+    fh = io.StringIO(text)
+    detected, header = S._read_header(fh)
+    assert detected == delim and header[-1] == "SNP"
+    colmap, layout = S._build_colmap(header, {})
+    plan = {"source": "column", "forced": None, "i_n": colmap["n_eff"],
+            "i_nca": None, "i_nco": None}
+    if block_fallback:
+        # The short block falls back before any kernel is called.
+        ss = S._parse_rows_jit(fh, delim, colmap, plan, (None, None, None))
+    else:
+        ss = S._parse_rows_python(fh, delim, colmap, layout, plan)
+    assert ss.id.tolist() == ["rs1"]
+    assert ss.n_eff.tolist() == [1000]
 
 
 def test_or_beta_warning_still_fires(tmp_path):

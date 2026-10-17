@@ -4,6 +4,19 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0.dev7] - 2026-10-17
+
+### Fixed
+
+- Header-only inspection reports missing sample size and accepts the reader's
+  scalar N and case/control arguments, including validation and precedence.
+  `allelign inspect` accepts `--n-eff`, `--n-cases` and `--n-controls`.
+- The header and reference row parser strip CRLF line endings when called
+  directly, matching the normalised line endings of file reads.
+- BED size errors report the full `.fam` sample count, even with a selection.
+- CLI JSON logs are published atomically; failed writes preserve existing logs.
+- The citation version matches the package version.
+
 ## [0.1.0.dev6] - 2026-10-16
 
 ### Added

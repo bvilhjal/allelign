@@ -354,3 +354,46 @@ def test_cli_inspect_clean_align_export(tmp_path, capsys):
         assert main(["pgs-export", str(w), "-o", str(pgs),
                      "--genome-build", "GRCh37"]) == 0
     assert read_scoring_file(pgs).meta["sd_source"] == "hwe"
+
+
+@pytest.mark.parametrize("options", [
+    ["--n-eff", "1000"],
+    ["--n-cases", "2000", "--n-controls", "8000"],
+])
+def test_cli_inspect_accepts_scalar_n(tmp_path, capsys, options):
+    path = tmp_path / "no_n.tsv"
+    path.write_text("SNP A1 A2 BETA SE\nrs1 A G 0.1 0.01\n")
+    assert main(["inspect", str(path)]) == 1
+    assert json.loads(capsys.readouterr().out)["missing"] == ["n_eff"]
+    assert main(["inspect", str(path), *options]) == 0
+    info = json.loads(capsys.readouterr().out)
+    assert info["missing"] == [] and info["n_source"] == "scalar"
+    out = tmp_path / "clean.tsv"
+    assert main(["clean", str(path), "-o", str(out), *options]) == 0
+    log = json.loads((tmp_path / "clean.tsv.log.json").read_text())
+    assert log["parse"]["n_eff_source"] == info["n_source"]
+    assert main(["inspect", str(path), "--n-cases", "2000"]) == 2
+    assert "given together" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_cli_log_write_failure_preserves_destination(tmp_path, monkeypatch, existing):
+    from allelign import cli
+    out = tmp_path / "clean.tsv"
+    path = tmp_path / "clean.tsv.log.json"
+    previous = '{"previous": true}\n'
+    if existing:
+        path.write_text(previous)
+
+    def fail(log, fh, **kwargs):
+        fh.write('{"partial":')
+        raise OSError("simulated log write failure")
+
+    monkeypatch.setattr(cli.json, "dump", fail)
+    with pytest.raises(OSError, match="log write failure"):
+        cli._write_log(out, {"parse": {"n_input": 1}})
+    if existing:
+        assert path.read_text() == previous
+    else:
+        assert not path.exists()
+    assert list(tmp_path.iterdir()) == ([path] if existing else [])

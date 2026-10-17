@@ -201,7 +201,7 @@ def _sniff_delimiter(header_line):
 
 def _read_header(fh):
     """``(delimiter, header columns)`` from the first line of ``fh``."""
-    first = fh.readline().rstrip("\n")
+    first = fh.readline().rstrip("\r\n")
     delim = _sniff_delimiter(first)
     return delim, (first.split(delim) if delim else first.split())
 
@@ -326,6 +326,26 @@ def _build_colmap(header, overrides):
     return colmap, layout
 
 
+def _n_arguments(n_eff, n_cases, n_controls, overrides):
+    """Separate scalar N from column overrides, shared by read and inspect."""
+    for name, value in (("n_cases", n_cases), ("n_controls", n_controls)):
+        if isinstance(value, str):
+            overrides[name] = value
+    if isinstance(n_eff, str):
+        overrides["n_eff"] = n_eff
+        n_eff = None
+    scalar_counts = [v for v in (n_cases, n_controls)
+                     if v is not None and not isinstance(v, str)]
+    if scalar_counts:
+        if len(scalar_counts) != 2:
+            raise ValueError("n_cases and n_controls must be given together")
+        if n_eff is not None:
+            raise ValueError("pass either n_eff or n_cases/n_controls, not both")
+        n_eff = n_eff_case_control(_n_eff_scalar_value(n_cases),
+                                   _n_eff_scalar_value(n_controls))
+    return _n_eff_scalar_value(n_eff)
+
+
 def _n_plan(colmap, lower, overrides, forced_n):
     """Where per-variant N comes from: ``(source, detail)``."""
     if forced_n is not None:
@@ -357,17 +377,21 @@ def detect_columns(path, **col_overrides):
     return header, {field: header[i] for field, i in colmap.items()}
 
 
-def inspect_columns(path, **col_overrides):
+def inspect_columns(path, *, n_eff=None, n_cases=None, n_controls=None,
+                    **col_overrides):
     """Header-only preflight: mapping, recognised layout and N source.
 
     Returns a dict with ``header``, ``mapping``, ``layout``, ``n_source`` and
-    ``missing`` (required fields that could not be resolved).
+    ``missing`` (required fields that could not be resolved, including N).
+    Sample-size arguments follow :func:`read_sumstats`: numbers supply a
+    constant N; strings name columns or their zero-based indices.
     """
+    forced_n = _n_arguments(n_eff, n_cases, n_controls, col_overrides)
     with open_text(path) as fh:
         delim, header = _read_header(fh)
     colmap, layout = _build_colmap(header, col_overrides)
     lower = [h.strip().lower() for h in header]
-    source, detail = _n_plan(colmap, lower, col_overrides, None)
+    source, detail = _n_plan(colmap, lower, col_overrides, forced_n)
     missing = []
     if "variant_string" not in layout:
         missing += [f for f in ("ea", "oa") if f not in colmap]
@@ -375,6 +399,8 @@ def inspect_columns(path, **col_overrides):
         missing.append("beta/or")
     if "se" not in colmap and "pval" not in colmap and "log10p" not in colmap:
         missing.append("se/pval")
+    if source is None:
+        missing.append("n_eff")
     return {"header": header, "delimiter": delim or "whitespace",
             "mapping": {field: header[i] for field, i in colmap.items()},
             "layout": {k: (header[v] if isinstance(v, int) and k != "saige"
@@ -460,22 +486,7 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
         Force a field to a column by name or zero-based index, e.g.
         ``read_sumstats(path, ea="A1", beta="effect")``.
     """
-    for name, value in (("n_cases", n_cases), ("n_controls", n_controls)):
-        if isinstance(value, str):
-            col_overrides[name] = value
-    if isinstance(n_eff, str):
-        col_overrides["n_eff"] = n_eff
-        n_eff = None
-    scalar_counts = [v for v in (n_cases, n_controls)
-                     if v is not None and not isinstance(v, str)]
-    if scalar_counts:
-        if len(scalar_counts) != 2:
-            raise ValueError("n_cases and n_controls must be given together")
-        if n_eff is not None:
-            raise ValueError("pass either n_eff or n_cases/n_controls, not both")
-        n_eff = n_eff_case_control(_n_eff_scalar_value(n_cases),
-                                   _n_eff_scalar_value(n_controls))
-    forced_n = _n_eff_scalar_value(n_eff)
+    forced_n = _n_arguments(n_eff, n_cases, n_controls, col_overrides)
     path = os.fspath(path)
     with open_text(path) as fh:
         delim, header = _read_header(fh)
@@ -975,7 +986,7 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
     isnan, isfinite, nan = math.isnan, math.isfinite, math.nan
 
     for raw in fh:
-        raw = raw.rstrip("\n")
+        raw = raw.rstrip("\r\n")
         if not raw:
             continue
         f = raw.split(delim) if delim else raw.split()

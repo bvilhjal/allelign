@@ -14,6 +14,7 @@ import numpy as np
 
 from . import __version__
 from . import status as _st
+from ._common import atomic_text
 
 
 def _columns(pairs):
@@ -26,15 +27,19 @@ def _columns(pairs):
     return out
 
 
-def _read(args):
-    from .sumstats import read_sumstats
+def _read_kwargs(args):
     kwargs = _columns(args.column)
     if args.n_eff is not None:
         kwargs["n_eff"] = args.n_eff
     if args.n_cases is not None or args.n_controls is not None:
         kwargs["n_cases"] = args.n_cases
         kwargs["n_controls"] = args.n_controls
-    return read_sumstats(args.sumstats, **kwargs)
+    return kwargs
+
+
+def _read(args):
+    from .sumstats import read_sumstats
+    return read_sumstats(args.sumstats, **_read_kwargs(args))
 
 
 def _qc(args, ss, status):
@@ -47,7 +52,7 @@ def _qc(args, ss, status):
 
 
 def _write_log(out, log):
-    with open(f"{out}.log.json", "w", encoding="utf-8") as fh:
+    with atomic_text(f"{out}.log.json") as fh:
         json.dump(log, fh, indent=2, sort_keys=True, default=str)
         fh.write("\n")
 
@@ -59,7 +64,7 @@ def _write_status(path, ss, status):
 
 def cmd_inspect(args):
     from .sumstats import inspect_columns
-    info = inspect_columns(args.sumstats, **_columns(args.column))
+    info = inspect_columns(args.sumstats, **_read_kwargs(args))
     print(json.dumps(info, indent=2))
     return 1 if info["missing"] else 0
 
@@ -204,8 +209,7 @@ def build_parser():
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("inspect", help="show the detected column mapping")
-    p.add_argument("sumstats")
-    p.add_argument("--column", action="append", metavar="FIELD=COLUMN")
+    _add_read_options(p)
     p.set_defaults(func=cmd_inspect)
 
     p = sub.add_parser("clean", help="parse, QC and write the canonical table")

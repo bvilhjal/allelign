@@ -75,6 +75,8 @@ def test_bed_rejects_a_bad_header_or_size(tmp_path):
     bed_path.write_bytes(good[:-1])
     with pytest.raises(ValueError, match="genotype bytes"):
         Bed(prefix)
+    with pytest.raises(ValueError, match="3 variants x 5 samples"):
+        Bed(prefix, samples=[0, 1])
     bed_path.write_bytes(b"\x6c\x1b\x00" + good[3:])
     with pytest.raises(ValueError, match="variant-major"):
         Bed(str(prefix) + ".bed")

@@ -90,7 +90,7 @@ class Bed:
         if size != expected:
             raise ValueError(
                 f"{self.path}: {size - 3} genotype bytes, expected {expected - 3} "
-                f"for {self.n_variants} variants x {self.n_samples} samples")
+                f"for {self.n_variants} variants x {n_fam} samples")
 
     def read(self, variant_idx=None):
         """Allele counts of the ``.bim``'s A1, ``(n_samples, n_selected)`` int8.
