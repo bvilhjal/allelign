@@ -494,6 +494,10 @@ def _run_screen(specs, z, total, *, rounds, window, threshold,
     eigh = _screen_eigh if eigh is None else eigh
 
     single = np.ndim(z) == 1
+    if stats_out is not None and not single:
+        raise ValueError(
+            "stats_out records one trait; use return_stats=True for several "
+            "z columns")
     zt = np.ascontiguousarray(
         np.asarray(z, dtype=_WORK_DTYPE).reshape(total, -1).T)
     # One independent stream per (block, round), derived in a fixed order.
@@ -586,6 +590,10 @@ def ld_consistency_screen(blocks, z, *, rounds=DEFAULT_ROUNDS,
         Also return per-trait counts: ``n_tested``, ``n_untested`` (variants
         in a block smaller than :data:`MIN_WINDOW`, kept unevaluated),
         ``n_dropped`` and ``per_round``.
+    stats_out : dict, optional
+        Filled in place with one trait's ``n_tested``, ``n_untested`` and
+        ``n_dropped``. Several columns of ``z`` raise; use ``return_stats``
+        for the per-column list.
 
     Returns
     -------
@@ -627,7 +635,9 @@ def ld_consistency_screen_selected(blocks, selection, z, *,
     aligned to it. Only window-sized submatrices of each source block are
     formed, so the selected panel is never materialised. The result, seed
     streams and progress events equal subsetting the blocks first and then
-    calling :func:`ld_consistency_screen`.
+    calling :func:`ld_consistency_screen`. ``stats_out``, when given, is
+    filled with ``n_tested``, ``n_untested`` and ``n_dropped``; ``z`` here is
+    one column, so that dict is the whole report.
     """
     try:
         source = list(blocks)

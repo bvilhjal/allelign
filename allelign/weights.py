@@ -142,7 +142,9 @@ def write_weights(path, *, id, chrom, pos, effect_allele, other_allele, weight,
     """Write an ldpred3 weights table; returns ``path``.
 
     ``af``/``sd`` (fit-cohort A1 frequency and dosage SD) are written as
-    ``AF_REF``/``SD_REF`` with ``SD_SOURCE`` when both are given.
+    ``AF_REF``/``SD_REF`` with ``SD_SOURCE`` when both are given. Floats use
+    ``repr``, so :func:`read_weights` reads them back bit for bit. Files
+    written at 8 significant digits still parse.
     """
     if sd_source not in SD_SOURCES:
         raise ValueError(
@@ -161,11 +163,11 @@ def write_weights(path, *, id, chrom, pos, effect_allele, other_allele, weight,
         for row in zip(*out_cols):
             if have_scale:
                 vid, c, p, a1, a2, w, af_, sd_ = row
-                fh.write(f"{vid}\t{c}\t{p}\t{a1}\t{a2}\t{w:.8g}"
-                         f"\t{af_:.8g}\t{sd_:.8g}\t{sd_source}\n")
+                fh.write(f"{vid}\t{c}\t{p}\t{a1}\t{a2}\t{repr(float(w))}"
+                         f"\t{repr(float(af_))}\t{repr(float(sd_))}\t{sd_source}\n")
             else:
                 vid, c, p, a1, a2, w = row
-                fh.write(f"{vid}\t{c}\t{p}\t{a1}\t{a2}\t{w:.8g}\n")
+                fh.write(f"{vid}\t{c}\t{p}\t{a1}\t{a2}\t{repr(float(w))}\n")
     return path
 
 
@@ -397,7 +399,7 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
                              f"chromosome and position, found {header}")
         flag_cols = [i for i, name in enumerate(header)
                      if name.strip().lower() in _NON_ADDITIVE]
-        n_read = n_flagged = n_bad_weight = n_inferred_oa = 0
+        n_read = n_flagged = n_bad_weight = n_inferred_oa = n_bad_pos = 0
         ids, chroms, eas, oas = [], [], [], []
         poss, ws, retained = array("q"), array("d"), array("q")
         width = len(header)
@@ -419,8 +421,13 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
                 n_bad_weight += 1
                 continue
             sid = fields[idx["id"]].strip() if idx["id"] is not None else ""
-            position = fields[idx["pos"]].strip() if idx["pos"] is not None else "0"
-            position = int(position) if position.lstrip("-").isdigit() else 0
+            raw_pos = (fields[idx["pos"]].strip()
+                       if idx["pos"] is not None else "0")
+            if raw_pos.lstrip("-").isdigit():
+                position = int(raw_pos)
+            else:
+                position = 0
+                n_bad_pos += 1
             oa = (fields[idx["oa"]].strip().upper()
                   if idx["oa"] is not None else "")
             if (oa in _MISSING_ALLELE and inferred_oa_idx is not None
@@ -452,6 +459,7 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
     log = {"n_rows": n_read, "n_kept": int(weight.size),
            "n_non_additive": n_flagged, "n_unparsable_weight": n_bad_weight,
            "n_inferred_other_allele": n_inferred_oa,
+           "n_unparsable_position": n_bad_pos,
            "columns_used": {k: v for k, v in used.items() if v},
            "harmonized_columns": harmonized_columns}
     if coordinate_used and not harmonized_columns:
@@ -528,8 +536,11 @@ def write_pgs_scoring_file(path, wt, *, genome_build, pgs_id=None,
     ``sum((WEIGHT/SD_REF) (g - 2 AF_REF))`` up to the constant
     ``sum(effect_weight * 2 AF_REF)``. Rows with ``SD_REF <= 1e-12`` export as
     0. The header records ``#genome_build`` (required: nothing in a weights
-    table records the build) and ``#sd_source`` -- ``unspecified`` when the
-    table predates ``SD_SOURCE``, rather than claiming ``empirical``.
+    table records the build), ``#variants_number`` (the row count) and
+    ``#sd_source`` -- ``unspecified`` when the table predates ``SD_SOURCE``,
+    rather than claiming ``empirical``. ``#variants_genome_wide`` is omitted:
+    a chromosome subset or a hits list would otherwise be labelled as the
+    genome-wide score.
 
     plink2 ``--score`` reads one header line, not comment blocks: strip the
     ``#`` lines first (``grep -v '^#'``). ``pgsc_calc`` ingestion is untested.
@@ -581,7 +592,6 @@ def write_pgs_scoring_file(path, wt, *, genome_build, pgs_id=None,
         f"#trait_reported={trait}",
         f"#genome_build={genome_build}",
         f"#variants_number={n}",
-        f"#variants_genome_wide={n}",
         "#weight_type=beta",
         "#weight_type_description=standardized effect divided by the "
         "fit-cohort dosage SD (WEIGHT/SD_REF), per effect-allele count",

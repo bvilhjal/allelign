@@ -82,6 +82,7 @@ def test_streamed_rows_preserve_late_metadata_and_bad_row_counts(tmp_path):
     assert s.log['n_rows'] == 6 and s.log['n_kept'] == 2
     assert s.log['n_non_additive'] == 1
     assert s.log['n_unparsable_weight'] == 3
+    assert s.log['n_unparsable_position'] == 0
 
 
 def test_the_header_fixes_the_delimiter_for_the_whole_file(tmp_path):
@@ -97,6 +98,17 @@ def test_the_header_fixes_the_delimiter_for_the_whole_file(tmp_path):
     sf = read_scoring_file(str(mixed))
     assert len(sf) == 1
     assert sf.log["n_unparsable_weight"] == 1
+
+
+def test_unparsable_position_is_counted_as_missing(tmp_path):
+    path = _write(tmp_path, [("rs1", 1, "100", "A", "G", 0.5),
+                             ("rs2", 1, "NA", "C", "T", 0.2),
+                             ("rs3", 1, "1.5", "G", "A", -0.1)],
+                  COLUMNS)
+    sf = read_scoring_file(path)
+    assert list(sf.pos) == [100, 0, 0]
+    assert sf.log["n_unparsable_position"] == 2
+    assert sf.log["n_kept"] == 3
 
 
 def test_odds_ratios_are_log_transformed(tmp_path):

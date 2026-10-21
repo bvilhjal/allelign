@@ -104,21 +104,22 @@ def read_pvar(path):
     chrom, ids, pos, a1, a2 = [], [], [], [], []
     pool = {}
     n_multi = 0
-    header = None
+    col = None
     with open_text(path) as fh:
         for line in fh:
             if line.startswith("##"):
                 continue
             if line.startswith("#"):
                 header = [h.strip().upper() for h in line[1:].split()]
+                col = {name: i for i, name in enumerate(header)}
                 continue
             f = line.split()
             if not f:
                 continue
-            if header is None:
+            if col is None:
                 # A headerless .pvar follows the .bim column order.
-                header = ["CHROM", "ID", "CM", "POS", "ALT", "REF"]
-            col = {name: i for i, name in enumerate(header)}
+                col = {name: i for i, name in enumerate(
+                    ["CHROM", "ID", "CM", "POS", "ALT", "REF"])}
             try:
                 c, vid = f[col["CHROM"]], f[col["ID"]]
                 p, ref, alt = f[col["POS"]], f[col["REF"]], f[col["ALT"]]

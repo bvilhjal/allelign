@@ -470,7 +470,9 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
     ----------
     path : str or path-like
         Delimited text (tab, comma or whitespace, auto-detected), optionally
-        gzip/bgzip compressed.
+        gzip/bgzip compressed. Fields are split on that delimiter with no
+        CSV quoting: a comma inside a field shifts the later columns, so use
+        tabs when a field can contain a comma.
     n_eff : float or str, optional
         A number **overrides** any per-variant N and flattens every row to that
         constant (the low-level escape hatch; :func:`anchor_n_eff` instead keeps

@@ -260,6 +260,12 @@ def test_pooled_screen_equals_serial_and_fills_stats_out():
     pooled = ld_consistency_screen(blocks, z, seed=2, ncores=3)
     np.testing.assert_array_equal(serial, pooled)
     assert stats["n_tested"] == 600 and stats["n_dropped"] == (~serial).sum()
+    zz = np.column_stack([z, -z])
+    with pytest.raises(ValueError, match="return_stats"):
+        ld_consistency_screen(blocks, zz, seed=2, stats_out={})
+    _keep, per_trait = ld_consistency_screen(blocks, zz, seed=2,
+                                             return_stats=True)
+    assert len(per_trait) == 2 and per_trait[0]["n_tested"] == 600
     calls = []
 
     def eigh(a):
@@ -447,6 +453,10 @@ def test_impute_n_eff_handles_degenerate_entries():
     se = np.array([0.01, 0.01, 0.0, 0.02])    # one zero-se
     n_imp, log = impute_n_eff(se, af, 10000)
     assert np.all(np.isfinite(n_imp)) and np.all(n_imp > 0)
+    with pytest.raises(ValueError, match="anchor_quantile"):
+        impute_n_eff(se, af, 10000, anchor_quantile=1.5)
+    with pytest.raises(ValueError, match="anchor_bins"):
+        impute_n_eff(se, af, 10000, anchor_bins=1.5)
     assert np.all(n_imp <= 10000 + 1e-6)
 
 
@@ -483,9 +493,11 @@ def test_af_concordance_catches_allele_inversions():
     af_gwas, af_ref, rng = _af_pair()
     bad = rng.choice(af_ref.size, 40, replace=False)
     af_gwas[bad] = 1.0 - af_gwas[bad]
-    keep, log, _ = af_concordance_mask(af_gwas, af_ref)
+    status = new_status(af_ref.size)
+    keep, log, _ = af_concordance_mask(af_gwas, af_ref, status=status)
 
     assert log["applied"] is True
+    assert (status[~keep] != 0).all() and (status[keep] == 0).all()
     # Every dropped variant is one we planted: no false positives.
     assert set(np.flatnonzero(~keep)) <= set(bad)
     # Everything with |f - 0.5| comfortably beyond the threshold is caught.
@@ -508,9 +520,13 @@ def test_af_concordance_refuses_to_apply_a_wholesale_drop():
     # A mirrored frequency column fails nearly everything. Dropping the genome
     # silently would be the worst outcome; report instead.
     af_gwas, af_ref, _ = _af_pair()
-    keep, log, _ = af_concordance_mask(1.0 - af_ref, af_ref)
+    status = new_status(af_ref.size)
+    keep, log, _ = af_concordance_mask(1.0 - af_ref, af_ref, status=status)
     assert log["applied"] is False
-    assert keep.all()                          # nothing dropped
+    assert keep.all() and (status == 0).all()  # nothing dropped or stamped
+    with pytest.raises(ValueError, match="status"):
+        af_concordance_mask(1.0 - af_ref, af_ref,
+                            status=np.zeros(af_ref.size))
     assert log["n_drop_af_diff"] == 0
     assert log["n_flagged_af_diff"] > 0        # but the count is still reported
     assert log["mirrored"] is True

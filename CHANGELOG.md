@@ -4,6 +4,27 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Fixed
+
+- `stats_out` on `ld_consistency_screen` records one trait. Several z
+  columns raise and point at `return_stats`, instead of leaving the last
+  column's counts in the caller's dict.
+- `af_concordance_mask` checks `status` even when the safety valve drops
+  nothing.
+- `impute_n_eff` rejects an `anchor_quantile` outside [0, 1] and a
+  non-integer `anchor_bins` with the usual control errors.
+- `read_pvar` builds its column map once per header, not once per data row.
+- An infinite position in an unmatched row is treated as missing by the
+  coverage diagnosis, as the coordinate matcher already does.
+- `read_scoring_file` counts unparsable positions
+  (`n_unparsable_position`). They still become position 0.
+- `write_weights` writes floats with `repr`, so `read_weights` gets the
+  same bits back. Files written at 8 significant digits still parse.
+- `write_pgs_scoring_file` no longer stamps `#variants_genome_wide` equal
+  to the row count. `#variants_number` is that count; the genome-wide
+  field would claim a chromosome subset or a hits list is the full score.
+- `read_sumstats` documents that comma-separated files are not CSV-quoted.
+
 ## [0.1.0.dev7] - 2026-10-17
 
 ### Fixed

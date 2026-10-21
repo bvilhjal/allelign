@@ -2,7 +2,7 @@
 
 ## 1. Reading summary statistics
 
-`read_sumstats` maps header names onto the fields `id chrom pos ea oa beta se n_eff eaf info`, case-insensitively, using `allelign.sumstats.COLUMN_ALIASES`. Any field can be forced to a column by name or zero-based index, e.g. `read_sumstats(path, ea="A1", beta=6)`. Use `inspect_columns(path)` (or `allelign inspect`) to see the mapping before a long read.
+`read_sumstats` maps header names onto the fields `id chrom pos ea oa beta se n_eff eaf info`, case-insensitively, using `allelign.sumstats.COLUMN_ALIASES`. Any field can be forced to a column by name or zero-based index, e.g. `read_sumstats(path, ea="A1", beta=6)`. Use `inspect_columns(path)` (or `allelign inspect`) to see the mapping before a long read. Files are split on tabs, commas or whitespace, with no CSV quoting: a comma inside a field shifts the later columns.
 
 - **Effects.** An OR column becomes `beta = log(OR)`. A missing SE is recovered as `|beta| / z`, with z from the p-value or from `-log10 p`; tiny p-values are handled in log space. A BETA column that looks like odds ratios (almost all positive, centred near 1) warns, but nothing is inferred.
 - **Frequencies.** Only effect-allele frequencies are mapped automatically. MAF is not, because it does not say which allele it counts.
@@ -114,7 +114,7 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
 
 ## 4. PGS effect sizes
 
-- **ldpred3 tables** (`read_weights`/`write_weights`) hold standardised weights, with optional `AF_REF SD_REF SD_SOURCE`.
+- **ldpred3 tables** (`read_weights`/`write_weights`) hold standardised weights, with optional `AF_REF SD_REF SD_SOURCE`. Floats are written so they read back bit for bit.
 - **PGS Catalog files** (`read_scoring_file`; public header vocabulary
   `SCORING_COLUMNS` for download validators):
   - weights are per allele count;
@@ -122,7 +122,7 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
   - OR/HR weights are logged;
   - non-additive rows are dropped;
   - `keep(id, position)` skips rows a reference cannot match, while the ratio check and the weight-mass denominator still read the whole file. `harmonize_weights` counts the skipped rows as unmatched.
-- **`write_pgs_scoring_file`** converts an ldpred3 table to a Catalog file with `effect_weight = WEIGHT/SD_REF`. The genome build is required, and `#sd_source` is `unspecified` when the table does not record it. For plink2 `--score`, strip the `#` lines first.
+- **`write_pgs_scoring_file`** converts an ldpred3 table to a Catalog file with `effect_weight = WEIGHT/SD_REF`. The genome build is required, `#variants_number` is the row count, and `#sd_source` is `unspecified` when the table does not record it. `#variants_genome_wide` is not written, because the table may be one chromosome or a hits list. For plink2 `--score`, strip the `#` lines first.
 
 ## 5. Deliberate differences from ldpred3
 

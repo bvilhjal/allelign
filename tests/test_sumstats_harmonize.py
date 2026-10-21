@@ -958,6 +958,17 @@ def test_reference_coverage_names_the_cause_of_a_thin_alignment():
     assert cov["reason"] == "no_rows_offered"
     assert "QC removed every row" in coverage_message(cov)
 
+    # A caller-built infinite position must not escape the diagnosis. The
+    # coordinate matcher already treats it as missing.
+    from allelign.align import Harmonized
+    bad = make(ids[:1], chrom[:1], [np.inf])
+    none = Harmonized(var_index=np.array([], dtype=np.int64),
+                      beta=np.array([]), se=np.array([]), n_eff=np.array([]),
+                      flipped=np.array([], dtype=bool))
+    cov = reference_coverage(bad, variants, none)
+    assert cov["n_unmatched_rows"] == 1
+    assert cov["n_unmatched_id_elsewhere"] == 1
+
 
 def test_coverage_thresholds_are_the_shared_ones():
     """These numbers are the contract bipred and SMARTpred also key on."""

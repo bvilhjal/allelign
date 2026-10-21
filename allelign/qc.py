@@ -24,7 +24,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import status as _st
-from ._common import finite_control, validate_boolean
+from ._common import finite_control, integer_at_least, validate_boolean
 from .alleles import normalize_chrom
 from .warning_markers import AF_SAFETY_LIMIT
 
@@ -315,6 +315,7 @@ def af_concordance_mask(af_gwas, af_ref, *, max_af_diff=0.1,
     max_drop_frac = float(max_drop_frac)
     if not np.isfinite(max_drop_frac) or not 0.0 < max_drop_frac <= 1.0:
         raise ValueError("max_drop_frac must be in (0, 1]")
+    status = _st.check_status(status, af_gwas.size)
 
     testable = np.isfinite(af_gwas) & np.isfinite(af_ref)
     with np.errstate(invalid="ignore"):
@@ -336,7 +337,7 @@ def af_concordance_mask(af_gwas, af_ref, *, max_af_diff=0.1,
     keep = np.ones(af_gwas.shape, dtype=bool)
     if applied:
         keep &= ~fail
-        _st.mark(_st.check_status(status, af_gwas.size), _st.AF_DIFF, fail)
+        _st.mark(status, _st.AF_DIFF, fail)
 
     log = {
         "n_input": int(af_gwas.size),
@@ -411,11 +412,15 @@ def impute_n_eff(se, af_ref, n_total, *, anchor_quantile=0.99,
     each frequency range carry the full sample). Optionally multiplied by
     INFO; non-finite values become ``n_total``; clipped at ``n_total``.
 
-    Returns ``(n_imp, log)``.
+    Returns ``(n_imp, log)``. ``anchor_quantile`` is in ``[0, 1]`` and
+    ``anchor_bins`` is an integer of at least 1.
     """
     se = np.asarray(se, dtype=float)
     af_ref = np.asarray(af_ref, dtype=float)
     n_total = float(n_total)
+    anchor_quantile = finite_control("anchor_quantile", anchor_quantile,
+                                     lower=0.0, upper=1.0)
+    anchor_bins = integer_at_least("anchor_bins", anchor_bins, 1)
     sd_ref2 = 2.0 * af_ref * (1.0 - af_ref)
     with np.errstate(divide="ignore", invalid="ignore"):
         n_raw = 1.0 / (se ** 2 * sd_ref2)
@@ -424,7 +429,7 @@ def impute_n_eff(se, af_ref, n_total, *, anchor_quantile=0.99,
         raise ValueError("no variants with finite se and polymorphic af_ref to "
                          "impute N from")
     idx = np.flatnonzero(finite)
-    n_bins = max(1, min(int(anchor_bins), idx.size // 10))
+    n_bins = max(1, min(anchor_bins, idx.size // 10))
     if n_bins > 1:
         order = idx[np.argsort(af_ref[idx], kind="stable")]
         per_bin = np.array([np.quantile(n_raw[part], anchor_quantile)

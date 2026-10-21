@@ -833,7 +833,7 @@ def _diagnose_unmatched(sumstats, variants, harmonized):
             norm = memo[raw] = _norm_chrom(raw)
         try:
             here = int(ss_pos[k])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             here = 0
         if (norm, here) in loci:
             continue

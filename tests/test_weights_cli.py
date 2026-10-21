@@ -34,6 +34,9 @@ def test_pgs_export_differs_from_frozen_score_by_one_constant(tmp_path):
     sf = read_scoring_file(out)
     assert sf.meta["genome_build"] == "GRCh37" and sf.pgs_id == "T1"
     assert sf.meta["sd_source"] == "empirical"
+    text = out.read_text()
+    assert f"#variants_number={len(wt)}" in text
+    assert "variants_genome_wide" not in text
     rng = np.random.default_rng(1)
     g = rng.binomial(2, wt.af_ref, (200, len(wt))).astype(float)
     frozen = ((g - 2 * wt.af_ref) / wt.sd_ref) @ wt.weight
@@ -154,6 +157,11 @@ def test_reference_readers(tmp_path):
     with pytest.warns(RuntimeWarning, match="multi-allelic"):
         p = read_pvar(pvar)
     assert list(p.a1) == ["A"] and list(p.a2) == ["G"]
+    bare = tmp_path / "bare.pvar"
+    bare.write_text("1\trs1\t0\t100\tA\tG\n")
+    headerless = read_pvar(bare)
+    assert list(headerless.a1) == ["A"] and list(headerless.a2) == ["G"]
+    assert list(headerless.pos) == [100]
     assert len(read_variants(bim)) == 2
     with pytest.raises(ValueError):
         read_variants(tmp_path / "r.txt")
@@ -226,6 +234,20 @@ def test_weight_reader_validates_header_rows_and_scale(tmp_path):
     with pytest.warns(UserWarning, match="no SD_SOURCE"):
         got = read_weights(path)
     assert got.id.tolist() == ["rs1"] and got.has_scale
+
+
+def test_weights_round_trip_bit_for_bit(tmp_path):
+    weight = np.array([0.1, 1.0 / 3.0, np.pi * 1e-8, -2.5e-3])
+    af = np.array([1.0 / 3.0, 0.2, 0.7, 1e-6])
+    sd = np.sqrt(2.0 * af * (1.0 - af))
+    path = tmp_path / "exact.tsv"
+    write_weights(path, id=[f"rs{i}" for i in range(4)], chrom=["1"] * 4,
+                  pos=[1, 2, 3, 4], effect_allele=["A"] * 4,
+                  other_allele=["G"] * 4, weight=weight, af=af, sd=sd)
+    got = read_weights(path)
+    np.testing.assert_array_equal(got.weight, weight)
+    np.testing.assert_array_equal(got.af_ref, af)
+    np.testing.assert_array_equal(got.sd_ref, sd)
 
 
 def test_sd_source_round_trips_and_defaults_to_empirical(tmp_path):
