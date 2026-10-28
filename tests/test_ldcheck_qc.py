@@ -171,6 +171,18 @@ def test_ld_blocks_from_genotypes_and_chromosome_blocks():
         chromosome_blocks(["1", "2", "1"])
 
 
+def test_ld_constant_fractional_calls_have_no_ld_but_tiny_variation_survives():
+    G = np.full((100, 4), .3)
+    G[:20, 1] = np.nan
+    G[20:40, 1] = -1
+    G[:, 2] += (np.arange(100) % 2) * 1e-10
+    G[:, 3] = G[:, 2]
+    R = ld_blocks_from_genotypes(G, [4])[0][0]
+    expected = np.eye(4)
+    expected[2, 3] = expected[3, 2] = 1
+    np.testing.assert_allclose(R, expected, atol=1e-7)
+
+
 def test_genomic_inflation():
     rng = np.random.default_rng(3)
     z = rng.standard_normal(200_000)

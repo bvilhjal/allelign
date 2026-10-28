@@ -378,6 +378,48 @@ def test_cli_inspect_clean_align_export(tmp_path, capsys):
     assert read_scoring_file(pgs).meta["sd_source"] == "hwe"
 
 
+def test_cli_explicit_reanchor_allows_declared_build_change(tmp_path, capsys):
+    gwas = tmp_path / "gwas.tsv"
+    gwas.write_text("SNP CHR BP A1 A2 BETA SE N EAF\n"
+                    "rs1 1 100 G A 0.1 0.01 1000 0.8\n"
+                    "absent 1 200 A G 0.2 0.01 1000 0.3\n"
+                    "rs3 1 300 A G 0.3 0.01 1000 0.3\n"
+                    "rs4 1 400 A C 0.4 0.01 1000 0.3\n")
+    bim = tmp_path / "ref.bim"
+    bim.write_text("1 rs1 0 1100 A G\n1 rs3 0 1300 A G\n"
+                   "2 rs3 0 2300 A G\n1 rs4 0 1400 A G\n")
+    out, status = tmp_path / "aligned.tsv", tmp_path / "status.tsv"
+    args = ["align", str(gwas), "--reference", str(bim), "-o", str(out),
+            "--sumstats-build", "hg38", "--reference-build", "hg19",
+            "--status-out", str(status)]
+    assert main(args) == 2
+    assert not out.exists()
+    assert "declared GRCh38" in capsys.readouterr().err
+    with pytest.warns(RuntimeWarning, match="identifier-keyed re-anchoring"):
+        assert main(args + ["--reanchor-on-identifier"]) == 0
+    ss = read_sumstats(out)
+    assert ss.id.tolist() == ["rs1"] and ss.pos.tolist() == [1100]
+    np.testing.assert_array_equal(ss.beta, [-0.1])
+    np.testing.assert_allclose(ss.eaf, [0.2])
+    log = json.loads((tmp_path / "aligned.tsv.log.json").read_text())
+    assert log["build"] == {"declared": "GRCh38", "reference": "GRCh37",
+                            "output": "GRCh37", "status": "reanchored"}
+    assert log["reanchor"]["n_dropped_absent_identifier"] == 1
+    assert log["reanchor"]["n_dropped_ambiguous_locus"] == 1
+    assert [row.split("\t")[-1] for row in status.read_text().splitlines()[1:]] == [
+        ".", "reanchor_dropped", "reanchor_dropped", "allele_mismatch"]
+
+
+def test_cli_reanchor_still_rejects_unknown_build_labels(tmp_path, capsys):
+    gwas, bim = _gwas(tmp_path)
+    out = tmp_path / "aligned.tsv"
+    assert main(["align", str(gwas), "--reference", str(bim), "-o", str(out),
+                 "--sumstats-build", "hg17", "--reference-build", "hg19",
+                 "--reanchor-on-identifier"]) == 2
+    assert not out.exists()
+    assert "unknown summary statistics build" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("options", [
     ["--n-eff", "1000"],
     ["--n-cases", "2000", "--n-controls", "8000"],

@@ -756,6 +756,11 @@ def ld_blocks_from_genotypes(genotypes, sizes, *, dtype=np.float32):
         mean = np.nanmean(X, axis=0)
         mean = np.where(np.isfinite(mean), mean, 0.0)
         X = np.where(missing, mean, X) - mean
+        # Constant fractional dosages can leave a centering residue. Detect
+        # their exact called range before that residue is normalized into LD.
+        varies = (np.min(X, axis=0, where=~missing, initial=np.inf)
+                  < np.max(X, axis=0, where=~missing, initial=-np.inf))
+        X[:, ~varies] = 0.0
         sd = np.sqrt((X * X).mean(axis=0))
         X = np.divide(X, sd, out=np.zeros_like(X), where=sd > 0)
         R = (X.T @ X) / X.shape[0]

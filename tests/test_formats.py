@@ -52,6 +52,57 @@ def test_plink2_omitted_column_is_the_other_allele(tmp_path, jit):
     np.testing.assert_allclose(ss.se, [0.05])
 
 
+def test_regression_test_rows_keep_additive_effects_before_qc(tmp_path, jit, monkeypatch):
+    from allelign import qc_sumstats
+    path = _write(tmp_path,
+        "#CHROM\tPOS\tID\tREF\tALT\tA1\tOMITTED\tOBS_CT\tBETA\tSE\tP\tTEST\n"
+        "1\t1e100\trs1\tA\tG\tG\tA\t1000\t0.9\tNA\t0.1\tAGE\n"
+        "1\t100\trs1\tA\tG\tG\tA\t1000\t0.1\tNA\t0.1\t add \n"
+        "1\t200\trs2\tC\tT\tT\tC\t1000\t-0.2\t0.01\t0.1\tADD-CONDTL\n"
+        "1\t200\trs2\tC\tT\tT\tC\t1000\t2.0\t0.01\t0.1\tADD-INT_SNP\n"
+        "1\t200\trs2\tC\tT\tT\tC\t1000\t3.0\t0.01\t0.1\tDOMDEV\n")
+    if jit:
+        # Do not let the reader's general replay hide a compiled-path defect.
+        def unexpected_fallback(*args, **kwargs):
+            raise AssertionError("rectangular ASCII input must use the JIT parser")
+        monkeypatch.setattr(S, "_parse_rows_python", unexpected_fallback)
+        monkeypatch.setattr(S, "_BLOCK_CHARS", 150)
+    with pytest.warns(RuntimeWarning, match="ignored 3 of 5 rows"):
+        ss = read_sumstats(path)
+    assert ss.id.tolist() == ["rs1", "rs2"]
+    np.testing.assert_array_equal(ss.beta, [0.1, -0.2])
+    assert ss.se[0] == pytest.approx(0.1 / S._two_sided_z("0.1"))
+    assert ss.parse_log["n_se_from_pval"] == 1
+    assert ss.parse_log["n_input"] == 5 and ss.parse_log["n_kept"] == 2
+    assert ss.parse_log["n_dropped_test"] == 3
+    assert ss.parse_log["accepted_test_values"] == ["ADD", "ADD-CONDTL"]
+    assert inspect_columns(path)["mapping"]["test"] == "TEST"
+    assert qc_sumstats(ss)[0].tolist() == [True, True]
+
+
+@pytest.mark.parametrize("test", ["DOM", "REC", "ADD-SKAT", "AGE", "", "unknown"])
+def test_unsupported_regression_test_never_becomes_a_snp_effect(tmp_path, jit, test):
+    path = _write(tmp_path, "SNP\tA1\tA2\tBETA\tSE\tN\tTEST\n"
+                  f"rs1\tA\tG\t0.1\t0.01\t1000\t{test}\n")
+    with pytest.warns(RuntimeWarning, match="ignored 1 of 1 rows"):
+        ss = read_sumstats(path)
+    assert len(ss) == 0
+    assert ss.parse_log["n_input"] == ss.parse_log["n_dropped_test"] == 1
+    assert ss.parse_log["n_kept"] == 0
+
+
+def test_regression_test_filter_survives_jit_block_replay(tmp_path, jit, monkeypatch):
+    # Unicode and a truncated row force the block's reference fallback.
+    path = _write(tmp_path, "SNP\tA1\tA2\tBETA\tSE\tN\tTEST\n"
+                  "rsé\tA\tG\t0.1\t0.01\t1000\tADD-CONDTL\n"
+                  "rs2\tA\tG\t0.2\t0.01\t1000\n")
+    monkeypatch.setattr(S, "_BLOCK_CHARS", 40)
+    with pytest.warns(RuntimeWarning, match="ignored 1 of 2 rows"):
+        ss = read_sumstats(path)
+    assert ss.id.tolist() == ["rsé"]
+    assert ss.parse_log["n_input"] == 2 and ss.parse_log["n_dropped_test"] == 1
+
+
 def test_regenie_genpos_and_log10p(tmp_path, jit):
     path = _write(tmp_path,
                   "CHROM GENPOS ID ALLELE0 ALLELE1 A1FREQ INFO N TEST BETA SE CHISQ LOG10P\n"

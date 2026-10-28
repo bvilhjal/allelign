@@ -90,4 +90,4 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
 
 ## Status
 
-Version 0.1.0.dev7. Private, not on PyPI. MIT licence.
+Version 0.1.0.dev8. Private, not on PyPI. MIT licence.

@@ -150,6 +150,31 @@ def test_harmonized_columns_are_preferred(tmp_path):
     assert raw.pos[0] == 999
 
 
+@pytest.mark.parametrize("identifier", ["rsID", "hm_rsID"])
+@pytest.mark.parametrize("coordinate_columns,expected_build", [
+    (["hm_chr", "hm_pos"], "GRCh38"),
+    (["chr_name", "chr_position"], "GRCh37"),
+    (["chr_name", "hm_pos"], ""),
+    (["hm_chr", "chr_position"], ""),
+])
+def test_scoring_coordinate_build_is_independent_of_identifier(
+        tmp_path, identifier, coordinate_columns, expected_build):
+    path = tmp_path / "coordinates.txt"
+    header = [identifier] + coordinate_columns + ["effect_allele", "effect_weight"]
+    path.write_text("#genome_build=GRCh37\n#HmPOS_build=GRCh38\n"
+                    + "\t".join(header) + "\nrs1\t1\t200\tG\t0.1\n")
+    sf = read_scoring_file(path)
+    assert sf.pos.tolist() == [200]
+    assert sf.genome_build == expected_build
+    assert ("mixed_coordinate_warning" in sf.log) == (expected_build == "")
+
+
+def test_harmonised_coordinates_without_build_do_not_inherit_original_build(tmp_path):
+    path = _write(tmp_path, [("rs1", 1, 200, "G", .1)],
+                  ["rsID", "hm_chr", "hm_pos", "effect_allele", "effect_weight"])
+    assert read_scoring_file(path).genome_build == ""
+
+
 def test_inferred_other_allele_is_a_row_wise_fallback(tmp_path):
     path = _write(
         tmp_path,

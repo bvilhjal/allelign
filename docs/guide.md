@@ -7,6 +7,12 @@
 - **Effects.** An OR column becomes `beta = log(OR)`. A missing SE is recovered as `|beta| / z`, with z from the p-value or from `-log10 p`; tiny p-values are handled in log space. A BETA column that looks like odds ratios (almost all positive, centred near 1) warns, but nothing is inferred.
 - **Frequencies.** Only effect-allele frequencies are mapped automatically. MAF is not, because it does not say which allele it counts.
 - **Missing values.** A blank or non-numeric position becomes 0 (missing). Empty lines are skipped.
+- **Association tests.** With a `TEST` column, only `ADD` and REGENIE's
+  covariate-adjusted marginal `ADD-CONDTL` are read. Covariate, interaction,
+  non-additive, blank and unknown tests are dropped with a warning.
+  `parse_log` records `n_input`, `n_kept`, `n_dropped_test` and
+  `accepted_test_values`; later per-row status tables cover the retained rows.
+  If both additive models occur for one variant, duplicate QC still applies.
 
 **Table 1. Layouts recognised from the header.**
 
@@ -25,9 +31,11 @@
 Catalog normalisers. It returns the normalised-name mapping and the OR and
 z-score fallback columns; provider aliases take priority. Its deposit schema
 keeps reported total N distinct from effective N. The normaliser owns row
-filtering, effect recovery and the study's sample-size policy. A submitted
-frequency is not used with harmonised alleles unless its harmonised counterpart
-is available.
+filtering, effect recovery and the study's sample-size policy. Alleles, beta,
+OR/z-score fallbacks and frequency share one orientation: a complete harmonised
+set is preferred, otherwise the submitted set is used. Incomplete sets are
+rejected. A provider allele/effect override selects its own orientation;
+fallback effects never cross to the other set.
 
 ### Sample size
 
@@ -63,6 +71,11 @@ For a known build mismatch:
 
 - `check_build` refuses mismatched declared builds.
 - `reanchor_on_identifier` moves rows onto the reference's coordinates for their identifiers. It drops rows whose identifier is absent, held at several loci, or missing. It is not a liftover.
+
+The CLI permits mismatched declarations only with `--reanchor-on-identifier`.
+Its build log retains `declared` and `reference`, records `status="reanchored"`
+for that mismatch, and identifies the `output` build as the reference build.
+The usual allele checks still apply after reanchoring.
 
 `harmonize_weights` applies the same rules to an ldpred3 weights table or a PGS Catalog score, aligns `AF_REF` (`1 - f` on a swap), and reports the matched share of squared weight.
 
@@ -119,6 +132,10 @@ Reference size matters. The null calibration assumes LD sampling noise is small 
   `SCORING_COLUMNS` for download validators):
   - weights are per allele count;
   - `hm_` columns are preferred, and `hm_inferOtherAllele` fills a missing other allele;
+  - coordinate build follows chromosome/position columns, independently of
+    the rsID column: `HmPOS_build` for harmonised coordinates, `genome_build`
+    for submitted ones; mixed coordinates or missing harmonised-build metadata
+    give an empty `ScoringFile.genome_build`, with mixed columns logged;
   - OR/HR weights are logged;
   - non-additive rows are dropped;
   - `keep(id, position)` skips rows a reference cannot match, while the ratio check and the weight-mass denominator still read the whole file. `harmonize_weights` counts the skipped rows as unmatched.
@@ -131,5 +148,7 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
 - Case and control count columns give effective N when no explicit effective-N column exists. ldpred3 would use a total-N column.
 - An effective-N column (`Effective_N`, `N_effective`, `all_inv_var_meta_effective`) wins over a total-N column such as `N` in the same header. ldpred3 read the total N.
 - New aliases sit after ldpred3's in every list, so files ldpred3 maps are mapped identically, apart from the effective-N rule above. Files ldpred3 could not map (PLINK2 with REF/ALT, REGENIE, Neale, `hm_` sets) now map.
+- A `TEST` column restricts input to additive association rows before duplicate
+  QC; earlier readers could treat covariate coefficients as variant effects.
 - `write_pgs_scoring_file` writes `#sd_source=unspecified` instead of `empirical` when the source is unknown.
 - `in_long_range_ld` normalises chromosome labels. APOE is off by default.

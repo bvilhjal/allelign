@@ -85,14 +85,23 @@ def cmd_clean(args):
 
 
 def cmd_align(args):
-    from .build import check_build
+    from .build import BuildMismatchError, check_build, normalize_build
     from .align import (coverage_message, harmonize, reanchor_on_identifier,
                             reference_coverage)
     from .qc import gwas_af_on_counted_allele
     from .sumstats import Sumstats
     from .variants import read_variants
 
-    build = check_build(args.sumstats_build, args.reference_build)
+    try:
+        build = check_build(args.sumstats_build, args.reference_build)
+    except BuildMismatchError:
+        if not args.reanchor_on_identifier:
+            raise
+        build = {"declared": normalize_build(args.sumstats_build),
+                 "reference": normalize_build(args.reference_build),
+                 "status": "reanchored"}
+    build["output"] = (build["reference"] if args.reanchor_on_identifier
+                       else build["reference"] or build["declared"])
     ref = read_variants(args.reference).freeze()
     ss = _read(args)
     status = _st.new_status(len(ss))

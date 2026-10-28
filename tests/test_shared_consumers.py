@@ -118,13 +118,69 @@ def test_catalog_schema_keeps_a_submitted_frequency_beside_submitted_alleles():
 
 @pytest.mark.parametrize("effect", ["hm_odds_ratio", "Zscore"])
 def test_catalog_schema_preserves_fallback_columns_and_provider_priority(effect):
-    header = ["rsid", "effect_allele", "other_allele", "se", effect,
+    prefix = "hm_" if effect.startswith("hm_") else ""
+    header = ["rsid", prefix + "effect_allele", prefix + "other_allele", "se", effect,
               "meta_se", "N", "effective_n"]
     mapping, odds, z = resolve_gwas_catalog_columns(
         header, {"se": ("meta_se",), "n": ("effective_n",)})
     assert mapping["se"] == "meta_se"
     assert mapping["n"] == "effective_n"
     assert (odds, z) == ((effect, None) if effect == "hm_odds_ratio" else (None, effect))
+
+
+@pytest.mark.parametrize("hm_effect", ["hm_beta", "hm_odds_ratio", "hm_z_score"])
+def test_catalog_effects_and_every_fallback_share_the_allele_orientation(hm_effect):
+    header = ["rsid", "effect_allele", "other_allele", "beta", "odds_ratio",
+              "z_score", "effect_allele_frequency", "se", "hm_effect_allele",
+              "hm_other_allele", hm_effect]
+    row = dict(zip(header, ["rs1", "G", "A", "0.1", str(np.exp(.1)), "10",
+                            ".2", ".01", "A", "G",
+                            {"hm_beta": "-.1", "hm_odds_ratio": str(np.exp(-.1)),
+                             "hm_z_score": "-10"}[hm_effect]]))
+    mapping, odds, zscore = resolve_gwas_catalog_columns(header)
+    assert row[mapping["effect_allele"]] == "A"
+    assert row[mapping["other_allele"]] == "G"
+    assert "eaf" not in mapping
+    # Follow the consumer's beta -> OR/z fallback using an independently
+    # specified allele swap, not another copy of the resolver's rules.
+    effects = ([float(row[mapping["beta"]])] if "beta" in mapping else [])
+    if odds:
+        effects.append(np.log(float(row[odds])))
+    if zscore:
+        effects.append(float(row[zscore]) * float(row[mapping["se"]]))
+    np.testing.assert_allclose(effects, [-.1])
+
+
+def test_catalog_uses_submitted_set_without_a_harmonised_effect():
+    mapping, odds, zscore = resolve_gwas_catalog_columns(
+        ["rsid", "effect_allele", "other_allele", "beta", "se",
+         "effect_allele_frequency", "hm_effect_allele", "hm_other_allele",
+         "hm_effect_allele_frequency"])
+    assert mapping["effect_allele"] == "effect_allele"
+    assert mapping["other_allele"] == "other_allele"
+    assert mapping["eaf"] == "effect_allele_frequency"
+    assert odds is None and zscore is None
+
+
+@pytest.mark.parametrize("fields", [
+    ["hm_effect_allele", "hm_other_allele", "beta"],
+    ["effect_allele", "other_allele", "hm_beta"],
+    ["hm_effect_allele", "other_allele", "hm_odds_ratio"],
+])
+def test_catalog_rejects_incomplete_orientation_sets(fields):
+    with pytest.raises(ValueError, match="unmappable columns"):
+        resolve_gwas_catalog_columns(["rsid", "se"] + fields)
+
+
+def test_catalog_provider_effect_override_keeps_submitted_alleles():
+    mapping, odds, zscore = resolve_gwas_catalog_columns(
+        ["rsid", "se", "effect_allele", "other_allele", "beta", "meta_beta",
+         "hm_effect_allele", "hm_other_allele", "hm_beta", "hm_odds_ratio"],
+        {"beta": ("meta_beta",)})
+    assert mapping["beta"] == "meta_beta"
+    assert mapping["effect_allele"] == "effect_allele"
+    assert mapping["other_allele"] == "other_allele"
+    assert odds is None and zscore is None
 
 
 def test_catalog_schema_rejects_an_effect_without_direction():

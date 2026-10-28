@@ -4,8 +4,20 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0.dev8] - 2026-10-28
+
 ### Fixed
 
+- Parse only additive `TEST` rows (`ADD`, `ADD-CONDTL`), with matching Python
+  and compiled paths, a warning and parse counts for discarded tests.
+- Keep streamed Catalog alleles, effects and OR/z-score fallbacks in one
+  orientation, including provider overrides; reject incomplete sets.
+- Permit the documented CLI cross-build identifier reanchoring while retaining
+  declared, reference and output builds in its log.
+- Determine PGS coordinate build independently of the rsID column; mixed
+  coordinates and undeclared harmonised builds remain unknown.
+- Give exactly constant fractional dosage columns zero off-diagonal LD,
+  including missing calls, without removing small real variation.
 - `stats_out` on `ld_consistency_screen` records one trait. Several z
   columns raise and point at `return_stats`, instead of leaving the last
   column's counts in the caller's dict.

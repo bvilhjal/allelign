@@ -108,7 +108,12 @@ COLUMN_ALIASES = {
     "info": ["info", "imputation_info", "imp_info", "rsq", "r2", "info_score",
              "imputation_quality", "minimac_r2",
              "imputationinfo"],
+    "test": ["test"],
 }
+
+# PLINK's additive effect and REGENIE's covariate-adjusted marginal effect.
+# Other ADD-* labels include interactions and gene-level omnibus tests.
+_ADDITIVE_TESTS = frozenset(("ADD", "ADD-CONDTL"))
 
 #: N-column names that already are an effective N: preferred over a total-N
 #: column and kept even when case and control counts are present.
@@ -487,6 +492,10 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
     **col_overrides
         Force a field to a column by name or zero-based index, e.g.
         ``read_sumstats(path, ea="A1", beta="effect")``.
+
+    When a ``TEST`` column is present, only ``ADD`` and ``ADD-CONDTL`` rows
+    are retained. Covariate, interaction, non-additive and unknown tests are
+    dropped with a warning; ``parse_log`` records their count.
     """
     forced_n = _n_arguments(n_eff, n_cases, n_controls, col_overrides)
     path = os.fspath(path)
@@ -517,6 +526,14 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
         def finish(ss):
             log = ss.parse_log
             log["columns"] = {field: header[i] for field, i in colmap.items()}
+            if "test" in colmap:
+                log["accepted_test_values"] = sorted(_ADDITIVE_TESTS)
+                if log["n_dropped_test"]:
+                    warnings.warn(
+                        f"ignored {log['n_dropped_test']:,} of "
+                        f"{log['n_input']:,} rows whose TEST is not ADD or "
+                        "ADD-CONDTL; only additive association effects are "
+                        "read", RuntimeWarning, stacklevel=3)
             log["n_eff_source"] = (source if detail is None
                                    else f"{source}:{detail}") or "missing"
             if layout:
@@ -757,8 +774,12 @@ def _jit_kernels():
     return _KERNELS or None
 
 
-def _empty_log(n, n_se):
-    return {"n_input": int(n), "n_se_from_pval": int(n_se)}
+def _empty_log(n, n_se, n_dropped_test=None):
+    log = {"n_input": int(n), "n_se_from_pval": int(n_se)}
+    if n_dropped_test is not None:
+        log.update(n_dropped_test=int(n_dropped_test),
+                   n_kept=int(n - n_dropped_test))
+    return log
 
 
 def _parse_rows_jit(fh, delim, colmap, plan, kernels):
@@ -782,6 +803,7 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
     i_log10p = colmap.get("log10p")
     i_eaf = colmap.get("eaf")
     i_info = colmap.get("info")
+    i_test = colmap.get("test")
     nfields = max(colmap.values()) + 1
     pool_dict = {}
     pool = pool_dict.setdefault
@@ -806,6 +828,16 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
         m = tokenize(b, dcode, starts, ends)
         if m < 0:
             return reference(text)
+        n_input = m
+        if i_test is not None:
+            keep = np.fromiter(
+                (text[a:z].strip().upper() in _ADDITIVE_TESTS
+                 for a, z in zip(starts[i_test, :m].tolist(),
+                                 ends[i_test, :m].tolist())),
+                dtype=bool, count=m)
+            if not keep.all():
+                starts, ends = starts[:, :m][:, keep], ends[:, :m][:, keep]
+                m = int(keep.sum())
 
         def floats(i):
             s = starts[i, :m]
@@ -918,7 +950,8 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
             beta=beta, se=se, n_eff=n_eff,
             eaf=floats(i_eaf) if i_eaf is not None else np.full(m, nan),
             info=floats(i_info) if i_info is not None else np.full(m, nan),
-            parse_log=_empty_log(m, n_se_from_p),
+            parse_log=_empty_log(n_input, n_se_from_p,
+                                 n_input - m if i_test is not None else None),
         )
 
     pieces = []
@@ -942,7 +975,9 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
                       for f in _SUMSTATS_FIELDS),
                     parse_log=_empty_log(
                         sum(p.parse_log["n_input"] for p in pieces),
-                        sum(p.parse_log["n_se_from_pval"] for p in pieces)))
+                        sum(p.parse_log["n_se_from_pval"] for p in pieces),
+                        sum(p.parse_log["n_dropped_test"] for p in pieces)
+                        if i_test is not None else None))
 
 
 def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
@@ -958,6 +993,7 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
     ids, chroms, poss, eas, oas = [], [], [], [], []
     betas, ses, ns, ncas, ncos, eafs, infos = [], [], [], [], [], [], []
     n_se_from_p = 0
+    n_input = n_dropped_test = 0
 
     i_id = colmap.get("id")
     i_chrom = colmap.get("chrom")
@@ -971,13 +1007,14 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
     i_log10p = colmap.get("log10p")
     i_eaf = colmap.get("eaf")
     i_info = colmap.get("info")
+    i_test = colmap.get("test")
     i_n, i_nca, i_nco = plan["i_n"], plan["i_nca"], plan["i_nco"]
     forced_n = plan["forced"]
     i_alt = layout.get("plink2_alt")
     i_var = layout.get("variant_string")
     used = [i for i in (i_id, i_chrom, i_pos, i_ea, i_oa, i_beta, i_or, i_se,
                         i_pval, i_log10p, i_n, i_nca, i_nco, i_eaf, i_info,
-                        i_alt, i_var) if i is not None]
+                        i_alt, i_var, i_test) if i is not None]
     nfields = max(used) + 1
 
     id_add, chrom_add, pos_add = ids.append, chroms.append, poss.append
@@ -991,9 +1028,13 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
         raw = raw.rstrip("\r\n")
         if not raw:
             continue
+        n_input += 1
         f = raw.split(delim) if delim else raw.split()
         if len(f) < nfields:                 # pad once, not per field
             f = f + [""] * (nfields - len(f))
+        if i_test is not None and f[i_test].strip().upper() not in _ADDITIVE_TESTS:
+            n_dropped_test += 1
+            continue
 
         if i_beta is not None:
             beta = _to_float(f[i_beta])
@@ -1069,7 +1110,8 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
         n_eff=n_eff,
         eaf=np.array(eafs, dtype=float),
         info=np.array(infos, dtype=float),
-        parse_log=_empty_log(len(betas), n_se_from_p),
+        parse_log=_empty_log(n_input, n_se_from_p,
+                             n_dropped_test if i_test is not None else None),
     )
 
 

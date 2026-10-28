@@ -31,9 +31,11 @@ def resolve_gwas_catalog_columns(fieldnames, extra_aliases=None):
     ``extra_aliases`` adds provider-scoped source names per target, tried
     before the Catalog aliases. Returns ``(mapping, odds, zscore)`` using
     the original header spellings; the latter two columns supply per-row
-    fallback effects. A submitted frequency is discarded beside harmonised
-    alleles without a harmonised frequency. This is header-only: consumers
-    keep their streaming row filters and their sample-size provenance.
+    fallback effects. Alleles, effects (including fallbacks) and frequency
+    come from one orientation: harmonised when a complete set is available,
+    submitted otherwise. Provider allele/effect aliases choose their own
+    orientation first. This is header-only: consumers keep their streaming
+    row filters and their sample-size provenance.
     """
     have = {}
     for field in (fieldnames or []):
@@ -50,15 +52,33 @@ def resolve_gwas_catalog_columns(fieldnames, extra_aliases=None):
             if alias in have:
                 mapping[target] = have[alias]
                 break
-    # allelign's rule: the submitted frequency counts the submitted effect
-    # allele, which harmonisation may have swapped, so beside hm_ alleles it
-    # needs its hm_ counterpart or it describes the other allele there.
-    if ("hm_effect_allele" in have
-            and mapping.get("effect_allele") == have["hm_effect_allele"]
-            and "hm_effect_allele_frequency" not in have):
-        mapping.pop("eaf", None)
-    odds = next((have[o] for o in _ODDS if o in have), None)
-    zscore = next((have[z] for z in _ZSCORE if z in have), None)
+    # A finite submitted beta must not override a harmonised OR, nor may a
+    # row with missing hm_beta fall back to a submitted OR or z-score.
+    directional = ("effect_allele", "other_allele", "beta", "eaf")
+    provider_modes = {
+        mapping[target].lower().startswith("hm_")
+        for target in directional[:3]
+        if target in mapping and mapping[target].lower()
+        in (extra_aliases or {}).get(target, ())}
+    if len(provider_modes) > 1:
+        raise ValueError("provider aliases mix submitted and harmonised effects/alleles")
+    modes = (next(iter(provider_modes)),) if provider_modes else (True, False)
+    chosen, odds, zscore = {}, None, None
+    for harmonised in modes:
+        def pick(names):
+            return next((have[name] for name in names if name in have
+                         and name.startswith("hm_") == harmonised), None)
+
+        candidate = {target: pick(aliases[target]) for target in directional}
+        candidate_odds, candidate_z = pick(_ODDS), pick(_ZSCORE)
+        if (candidate["effect_allele"] and candidate["other_allele"]
+                and (candidate["beta"] or candidate_odds or candidate_z)):
+            chosen = {target: name for target, name in candidate.items() if name}
+            odds, zscore = candidate_odds, candidate_z
+            break
+    for target in directional:
+        mapping.pop(target, None)
+    mapping.update(chosen)
     missing = [c for c in _REQUIRED if c not in mapping]
     if "beta" not in mapping and odds is None and zscore is None:
         missing.append("beta/odds_ratio/z_score")

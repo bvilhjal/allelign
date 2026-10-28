@@ -312,8 +312,8 @@ class ScoringFile:
 
     @property
     def genome_build(self):
-        """Build of the coordinates actually used (the harmonised build if any)."""
-        return self.log.get("build_used") or self.meta.get("genome_build", "")
+        """Build of the coordinates used; empty when their provenance is mixed."""
+        return self.log.get("build_used", self.meta.get("genome_build", ""))
 
     def __str__(self):
         return (f"{self.pgs_id}: {len(self)} variants"
@@ -361,8 +361,10 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
                       keep=None):
     """Parse a PGS Catalog scoring file (plain or gzipped).
 
-    * ``hm_rsID``/``hm_chr``/``hm_pos`` are used when present (they are on
-      the build the file name advertises); where ``other_allele`` is missing,
+    * ``hm_rsID``/``hm_chr``/``hm_pos`` are used when present; coordinate
+      build comes from ``HmPOS_build``, independently of the identifier.
+      Mixed submitted/harmonised coordinates have an unknown build.
+      Where ``other_allele`` is missing,
       ``hm_inferOtherAllele`` fills it row by row.
     * ``weight_type`` OR/HR (odds or hazard ratios) are log-transformed; a
       non-positive ratio is an error.
@@ -454,7 +456,7 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
     pos = np.frombuffer(poss, dtype=np.int64)
     weight = np.frombuffer(ws, dtype=np.float64).copy()
     coordinate_used = [str(used[name]).startswith("hm_")
-                       for name in ("id", "chrom", "pos") if used[name]]
+                       for name in ("chrom", "pos") if used[name]]
     harmonized_columns = bool(coordinate_used) and all(coordinate_used)
     log = {"n_rows": n_read, "n_kept": int(weight.size),
            "n_non_additive": n_flagged, "n_unparsable_weight": n_bad_weight,
@@ -462,14 +464,15 @@ def read_scoring_file(path, *, prefer_harmonized=True, drop_non_additive=True,
            "n_unparsable_position": n_bad_pos,
            "columns_used": {k: v for k, v in used.items() if v},
            "harmonized_columns": harmonized_columns}
-    if coordinate_used and not harmonized_columns:
+    if any(coordinate_used) and not harmonized_columns:
         log["mixed_coordinate_warning"] = (
-            "some but not all of the rsID/chromosome/position columns are "
-            "harmonized; coordinates may mix genome builds")
+            "chromosome and position columns mix submitted and harmonized "
+            "coordinates; their genome build is unknown")
+        log["build_used"] = ""
     if harmonized_columns:
         log["build_used"] = (meta.get("hmpos_build")
                              or meta.get("harmonized_build")
-                             or meta.get("genome_build", ""))
+                             or "")
     if n_inferred_oa:
         log["columns_used"]["oa_fallback"] = inferred_oa_name
     multi = sum(1 for a in oas if "/" in a)
