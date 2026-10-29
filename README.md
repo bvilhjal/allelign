@@ -10,15 +10,16 @@ NumPy is the only dependency. Numba speeds up the parser about threefold, and Sc
 
 ## Install
 
-From GitHub:
+From PyPI:
+
+```bash
+pip install "allelign[fast]"
+```
+
+From GitHub, or a sibling checkout as with the rest of the family:
 
 ```bash
 pip install "allelign[fast] @ git+https://github.com/bvilhjal/allelign.git"
-```
-
-From a sibling checkout, as with the rest of the family:
-
-```bash
 pip install -e "../allelign[fast]"
 ```
 
