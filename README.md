@@ -93,7 +93,7 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
   - The split-half LD-consistency screen (DENTIST-style) with full-window confirmation, on dense, int8, low-rank or lazily provided LD, or on LD formed block by block from a PLINK `.bed` reference.
 - **Effect sizes.** ldpred3 weight tables, PGS Catalog reading and writing, and alignment of either to a reference.
 
-[docs/guide.md](docs/guide.md) has the rules, defaults and the deliberate differences from ldpred3.
+[docs/guide.md](docs/guide.md) has the rules, defaults and the deliberate differences from ldpred3. A hands-on pass over download → inspect → clean → align is [docs/walkthrough.md](docs/walkthrough.md), with the same flow as a notebook in [docs/walkthrough.ipynb](docs/walkthrough.ipynb).
 
 ## Consumers
 

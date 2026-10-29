@@ -25,6 +25,10 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 - An AI-assistance disclaimer in the README and the guide: parts of the code
   and documentation were generated with AI tools and reviewed by the
   maintainer.
+- A hands-on walkthrough (docs/walkthrough.md: download → inspect → clean →
+  align → scores, with the records each step writes) and the same flow as an
+  executable notebook (docs/walkthrough.ipynb), both linked from the README
+  and shipped in sdists.
 - References: README and docs/guide.md cite the methods implemented — DENTIST
   (the LD-consistency screen), the SD/AF checks and per-variant N imputation,
   the PGS Catalog scoring format, the GWAS Catalog `hm_` layout, and the
