@@ -4,6 +4,8 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-29
+
 ### Added
 
 - A bare source reference anywhere a sumstats file goes: `read_sumstats`,
