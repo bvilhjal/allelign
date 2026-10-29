@@ -3,8 +3,7 @@ message: "If you use allelign, please cite this software."
 type: software
 title: allelign
 authors:
-  - family-names: "Vilhjálmsson"
-    given-names: "Bjarni"
+  - name: bvilhjal
 version: "0.1.0"
 repository-code: "https://github.com/bvilhjal/allelign"
 license: MIT

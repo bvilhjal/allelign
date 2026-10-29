@@ -4,6 +4,18 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Changed
+
+- Package authorship metadata (`pyproject.toml`, `CITATION.cff`) records the
+  bvilhjal account rather than a personal name; the LICENSE keeps the
+  copyright name.
+
+### Added
+
+- References: README and docs/guide.md cite the methods implemented — DENTIST
+  (the LD-consistency screen), the SD/AF checks and per-variant N imputation,
+  the PGS Catalog scoring format, the GWAS Catalog `hm_` layout, and the
+  height-GWAS screen example.
 ## [0.1.0] - 2026-10-29
 
 ### Added

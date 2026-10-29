@@ -96,6 +96,33 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
 - **bipred** takes the region table, long-range mask, strict implied-N diagnostic and weight-file I/O from allelign. Its wrapper includes APOE by default; its LDpred2-style SD diagnostic stays in bipred. Trait preparation still goes through ldpred3.
 - **gwfm, multipgs and SMARTpred** use allelign for reading, alignment, QC and weight-file I/O. multipgs aligns both scoring files and fitted weights with `harmonize_weights`. SMARTpred and the LDpred3 harvester share the header-only `resolve_gwas_catalog_columns` rules while retaining streamed filtering. LD caches, prepared traits, the fit and pipeline reports stay in ldpred3.
 
+## References
+
+The methods allelign implements:
+
+- Chen W, Wu Y, Zheng Z, et al. [Improved analyses of GWAS summary
+  statistics by reducing data heterogeneity and
+  errors](https://doi.org/10.1038/s41467-021-27438-7). *Nature
+  Communications* (2021). The DENTIST statistic behind the LD-consistency
+  screen.
+- Privé F, Arbel J, Aschard H, et al. [Identifying and correcting for
+  misspecifications in GWAS summary statistics and polygenic
+  scores](https://doi.org/10.1016/j.xhgg.2022.100136). *HGG Advances*
+  (2022). The SD-consistency and frequency checks, and the per-variant N
+  imputation.
+- Lambert SA, Gil L, Jupp S, et al. [The Polygenic Score Catalog as an open
+  database for reproducibility and systematic
+  evaluation](https://doi.org/10.1038/s41588-021-00783-5). *Nature
+  Genetics* (2021). The scoring-file format `read_scoring_file` parses.
+- Sollis E, Mosaku A, Abid A, et al. [The NHGRI-EBI GWAS Catalog:
+  knowledgebase and deposition
+  resource](https://doi.org/10.1093/nar/gkac1010). *Nucleic Acids Research*
+  (2023). The harmonised `hm_` deposit layout.
+- Yengo L, Vedantam S, Marouli E, et al. [A saturated map of common genetic
+  variants associated with human
+  height](https://doi.org/10.1038/s41586-022-05275-y). *Nature* (2022).
+  The LD-screen example in the guide.
+
 ## Status
 
 Version 0.1.0. MIT licence. If you use allelign, please cite it — see

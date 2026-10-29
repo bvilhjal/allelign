@@ -123,7 +123,7 @@ The screen takes LD as `[(R, idx), …]` blocks partitioning the variants. `R` c
 
 **Limits.** It is not the complete published DENTIST procedure, so validate the mask for your study. A drop rate of several percent usually means the LD is not the matrix the GWAS was drawn against.
 
-Reference size matters. The null calibration assumes LD sampling noise is small relative to the z-scores' precision. On chr22 of Yengo 2022 EUR height (N about 1.6M), aligned to 1000G with LD from its 503 EUR samples, the screen dropped 1,300 of 14,582 variants (9%); the CLI path gives the same count (8 s, 0.57 GB). That mostly measures the small reference, not bad statistics. With a very large GWAS, use a reference of comparable quality (for example UK Biobank LD), or read the mask as a diagnostic.
+Reference size matters. The null calibration assumes LD sampling noise is small relative to the z-scores' precision. On chr22 of Yengo et al. 2022 EUR height (N about 1.6M), aligned to 1000G with LD from its 503 EUR samples, the screen dropped 1,300 of 14,582 variants (9%); the CLI path gives the same count (8 s, 0.57 GB). That mostly measures the small reference, not bad statistics. With a very large GWAS, use a reference of comparable quality (for example UK Biobank LD), or read the mask as a diagnostic.
 
 ## 4. PGS effect sizes
 
@@ -152,3 +152,27 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
   QC; earlier readers could treat covariate coefficients as variant effects.
 - `write_pgs_scoring_file` writes `#sd_source=unspecified` instead of `empirical` when the source is unknown.
 - `in_long_range_ld` normalises chromosome labels. APOE is off by default.
+
+## 6. References
+
+- Chen W, Wu Y, Zheng Z, et al. [Improved analyses of GWAS summary statistics
+  by reducing data heterogeneity and
+  errors](https://doi.org/10.1038/s41467-021-27438-7). *Nature
+  Communications* (2021). The DENTIST statistic behind the
+  LD-consistency screen.
+- Privé F, Arbel J, Aschard H, et al. [Identifying and correcting for
+  misspecifications in GWAS summary statistics and polygenic
+  scores](https://doi.org/10.1016/j.xhgg.2022.100136). *HGG Advances* (2022).
+  The SD-consistency and frequency checks, and the per-variant N imputation.
+- Lambert SA, Gil L, Jupp S, et al. [The Polygenic Score Catalog as an open
+  database for reproducibility and systematic
+  evaluation](https://doi.org/10.1038/s41588-021-00783-5). *Nature Genetics*
+  (2021). The scoring-file format `read_scoring_file` parses.
+- Sollis E, Mosaku A, Abid A, et al. [The NHGRI-EBI GWAS Catalog:
+  knowledgebase and deposition
+  resource](https://doi.org/10.1093/nar/gkac1010). *Nucleic Acids Research*
+  (2023). The harmonised `hm_` deposit layout.
+- Yengo L, Vedantam S, Marouli E, et al. [A saturated map of common genetic
+  variants associated with human
+  height](https://doi.org/10.1038/s41586-022-05275-y). *Nature* (2022). The
+  LD-screen example above.
