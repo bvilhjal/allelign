@@ -4,6 +4,13 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Added
+
+- Public-release packaging: a PyPI publish workflow on GitHub releases
+  (PyPI trusted publishing), README install-from-GitHub instructions and CI
+  badge, trove classifiers and project URLs in `pyproject.toml`, and a
+  `MANIFEST.in` so sdists carry the changelog, citation file and guide.
+
 ## [0.1.0.dev8] - 2026-10-28
 
 ### Fixed

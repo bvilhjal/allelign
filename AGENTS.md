@@ -1,6 +1,6 @@
 # Agent notes
 
-- Environment: editable install in the `ldpred3-accelerate` conda env (`/Users/au507860/anaconda3/envs/ldpred3-accelerate/bin/python`, 3.14), with Numba and SciPy.
+- Environment: editable install in the `ldpred3-accelerate` conda env (`~/anaconda3/envs/ldpred3-accelerate/bin/python`, 3.14), with Numba and SciPy.
 - Run Python with `-P` when the working directory is `REPOS/`. Otherwise the `allelign/` repo directory shadows the installed package as a namespace package, and `import allelign` finds no `__version__`.
 - Tests: `pytest -q`, with `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` for deterministic numerics. Markers:
   - `parity`: compares against ldpred3; skipped without it;
