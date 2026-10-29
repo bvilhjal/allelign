@@ -13,6 +13,7 @@ from .alleles import (allele_orientation, is_ambiguous, normalize_chrom,
                       reverse_complement)
 from .build import BuildMismatchError, check_build, normalize_build
 from .catalog import resolve_gwas_catalog_columns
+from .download import download_ref, parse_ref, read_keep_ids, resolve_ref
 from .genotypes import Bed, ld_consistency_screen_genotypes
 from .align import (Harmonized, HarmonizedWeights,
                     count_positional_only_matches, coverage_message,
@@ -63,4 +64,6 @@ __all__ = [
     "chromosome_blocks", "ld_consistency_screen_genotypes",
     # per-variant status
     "QC_REASON_NAMES", "new_status", "status_counts", "write_status_table",
+    # downloading
+    "parse_ref", "resolve_ref", "download_ref", "read_keep_ids",
 ]

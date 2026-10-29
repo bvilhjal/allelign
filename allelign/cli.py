@@ -1,7 +1,10 @@
-"""Command-line interface: ``allelign inspect | clean | align | pgs-export``.
+"""Command-line interface: ``allelign inspect | clean | align | pgs-export | download``.
 
 ``align --ld-screen`` adds the LD-consistency screen, with LD computed from the
 reference fileset's own genotypes (``.bed``/``.fam`` beside the ``.bim``).
+``download`` fetches a published summary-statistics or scoring file by its
+source reference (GWAS Catalog accession, ``FINNGEN:R11:I9_AF`` and the
+other providers in :mod:`allelign.download`).
 """
 
 from __future__ import annotations
@@ -184,6 +187,22 @@ def cmd_pgs_export(args):
     return 0
 
 
+def cmd_download(args):
+    from .download import download_ref, read_keep_ids, resolve_ref
+    if args.dry_run:
+        plan = resolve_ref(args.ref, build=args.build)
+        print(json.dumps(plan, indent=2, sort_keys=True, default=str))
+        return 0
+    keep_ids = read_keep_ids(args.keep_ids) if args.keep_ids else None
+    record = download_ref(args.ref, args.out, build=args.build,
+                          keep_ids=keep_ids, meta=not args.no_meta)
+    kept = f", kept {record['n_kept']:,} of {record['n_input']:,} rows" \
+        if "n_kept" in record else ""
+    print(f"allelign: downloaded {record['label']} -> {args.out} "
+          f"({record['n_bytes_written']:,} bytes{kept})", file=sys.stderr)
+    return 0
+
+
 def _add_read_options(p):
     p.add_argument("sumstats", help="summary-statistics file (.gz accepted)")
     p.add_argument("--column", action="append", metavar="FIELD=COLUMN",
@@ -266,6 +285,28 @@ def build_parser():
     p.add_argument("--trait", default=None)
     p.add_argument("--sd-source", choices=("empirical", "hwe"), default=None)
     p.set_defaults(func=cmd_pgs_export)
+
+    p = sub.add_parser(
+        "download", help="fetch published sumstats or a PGS score by reference",
+        description="Resolve a source reference (GWAS Catalog GCST accession, "
+                    "FINNGEN:R11:I9_AF, COVIDHGI:R7:C2, GBMI:ASTHMA:EUR, "
+                    "EQTL:QTS000001:QTD000001:ENSG00000008128 or a PGS id) "
+                    "and download it with a <out>.meta.json provenance "
+                    "sidecar.")
+    p.add_argument("ref")
+    p.add_argument("-o", "--out", required=True)
+    p.add_argument("--build", choices=("GRCh37", "GRCh38"), default=None,
+                   help="preferred harmonised build for a PGS score "
+                        "(default GRCh37, then GRCh38, then the submitted "
+                        "file)")
+    p.add_argument("--keep-ids", default=None, metavar="FILE",
+                   help="rsID list, .bim or .pvar: stream only matching rows "
+                        "(comma-joined rsids match on any part)")
+    p.add_argument("--no-meta", action="store_true",
+                   help="do not write the <out>.meta.json sidecar")
+    p.add_argument("--dry-run", action="store_true",
+                   help="resolve and print the plan without downloading")
+    p.set_defaults(func=cmd_download)
     return ap
 
 

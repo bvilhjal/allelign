@@ -1,5 +1,9 @@
 # allelign guide
 
+Parts of allelign's code and documentation were generated with the
+assistance of AI tools and reviewed by the maintainer; validate the rules
+below on your own inputs before relying on them.
+
 ## 1. Reading summary statistics
 
 `read_sumstats` maps header names onto the fields `id chrom pos ea oa beta se n_eff eaf info`, case-insensitively, using `allelign.sumstats.COLUMN_ALIASES`. Any field can be forced to a column by name or zero-based index, e.g. `read_sumstats(path, ea="A1", beta=6)`. Use `inspect_columns(path)` (or `allelign inspect`) to see the mapping before a long read. Files are split on tabs, commas or whitespace, with no CSV quoting: a comma inside a field shifts the later columns.
@@ -153,7 +157,27 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
 - `write_pgs_scoring_file` writes `#sd_source=unspecified` instead of `empirical` when the source is unknown.
 - `in_long_range_ld` normalises chromosome labels. APOE is off by default.
 
-## 6. References
+## 6. Downloading public summary statistics
+
+`resolve_ref(ref)` names one published file; `download_ref(ref, dest)` fetches it atomically and writes a `<dest>.meta.json` sidecar (URL, provider, trait, SHA-256, filter counts). On the CLI: `allelign download REF -o OUT [--dry-run] [--keep-ids FILE] [--build GRCh37|GRCh38]`.
+
+**Table 3. Source references.**
+
+| Reference | File | Build |
+|---|---|---|
+| `GCST91000728` | GWAS Catalog harmonised sumstats; trait and sample from the Catalog API | declared in the file |
+| `FINNGEN:R11:I9_AF` | one FinnGen endpoint; `rsids` may be comma-joined | GRCh38 |
+| `COVIDHGI:R7:C2` | COVID-19 HGI analysis `A2`/`B1`/`B2`/`C2`, ALL population | GRCh37 |
+| `GBMI:ASTHMA:EUR` | GBMI `052021` endpoint in one ancestry stratum | GRCh38 |
+| `EQTL:QTS000001:QTD000001:ENSG00000008128` | one eQTL Catalogue molecular trait, filtered at download | GRCh38 |
+| `PGS000337` | PGS Catalog score; harmonised preferred (GRCh37 unless `--build`) | in the file |
+
+- Resolution HEAD-checks the URL, so `--dry-run` announces a download that will not then fail halfway on a 404.
+- The GBMI stratum and the eQTL molecular trait are required, not defaulted: the multi-ancestry meta and the all-traits bulk file are not what a single-trait fit wants.
+- `--keep-ids FILE` (an rsID list, `.bim` or `.pvar`) streams only matching rows; a comma-joined `rsids` cell matches when any part does.
+- A downloaded file is read with the same rules as any other input (`read_sumstats`, `read_scoring_file`); the provider columns are in the alias table.
+
+## 7. References
 
 - Chen W, Wu Y, Zheng Z, et al. [Improved analyses of GWAS summary statistics
   by reducing data heterogeneity and

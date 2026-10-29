@@ -57,9 +57,14 @@ allelign clean gwas.tsv.gz -o clean.tsv.gz --status-out status.tsv
 allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --sumstats-build GRCh38 --reference-build GRCh37 --reanchor-on-identifier
 allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --ld-screen --ld-keep eur_samples.txt --status-out status.tsv
 allelign pgs-export prs.weights.tsv -o PGS_my.txt --genome-build GRCh37
+allelign download GCST91000728 -o gwas.h.tsv.gz                # GWAS Catalog
+allelign download FINNGEN:R11:I9_AF -o finngen.tsv.gz          # FinnGen, and the providers below
+allelign download EQTL:QTS000001:QTD000001:ENSG00000008128 -o eqtl.tsv.gz
+allelign download GCST91000728 -o gwas.h.tsv.gz --keep-ids ref.bim
+allelign download PGS000337 -o score.txt.gz --build GRCh38 --dry-run
 ```
 
-Each command writes `<out>.log.json` with the parse, QC, harmonisation and coverage records.
+Each command writes `<out>.log.json` with the parse, QC, harmonisation and coverage records; `download` writes a `<out>.meta.json` provenance sidecar (URL, provider, trait, SHA-256, filter counts) instead.
 
 ## What it covers
 
@@ -71,6 +76,7 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
   - Neale `chr:pos:ref:alt`;
   - FinnGen;
   - effective N from case and control counts.
+- **Downloading.** `allelign download` resolves a published study by reference — GWAS Catalog (`GCST…`), PGS Catalog (`PGS…`), FinnGen, COVID-HGI, GBMI, eQTL Catalogue — checks the URL, streams it locally with a provenance sidecar, and can keep only the rows a reference can match.
 - **Alignment.** ldpred3's harmoniser:
   - identifier matching with coordinate checks, so a build mix-up is unmatched rather than silently accepted;
   - strand flips;
@@ -122,6 +128,13 @@ The methods allelign implements:
   variants associated with human
   height](https://doi.org/10.1038/s41586-022-05275-y). *Nature* (2022).
   The LD-screen example in the guide.
+
+## AI assistance
+
+Parts of allelign's code and documentation were generated with the assistance
+of AI tools and reviewed by the maintainer. As with any analysis software,
+validate its behaviour on inputs you understand before relying on it; see the
+[LICENSE](LICENSE) for the warranty terms.
 
 ## Status
 

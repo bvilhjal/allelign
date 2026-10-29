@@ -104,7 +104,7 @@ COLUMN_ALIASES = {
     # a non-standard name is available through the explicit ``eaf=`` override.
     "eaf": ["eaf", "freq", "frq", "effect_allele_frequency", "a1freq",
             "freq1", "af", "effect_allele_freq",
-            "a1_freq", "af_alt", "hm_effect_allele_frequency"],
+            "a1_freq", "af_alt", "all_meta_af", "hm_effect_allele_frequency"],
     "info": ["info", "imputation_info", "imp_info", "rsq", "r2", "info_score",
              "imputation_quality", "minimac_r2",
              "imputationinfo"],

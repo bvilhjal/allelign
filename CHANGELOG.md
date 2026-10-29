@@ -12,6 +12,19 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ### Added
 
+- `allelign download` (and `parse_ref`, `resolve_ref`, `download_ref`,
+  `read_keep_ids`): resolve and fetch published summary statistics and PGS
+  scores — GWAS Catalog harmonised accessions, PGS Catalog scores
+  (harmonised preferred), FinnGen endpoints, COVID-19 HGI analyses, GBMI
+  ancestry strata and eQTL Catalogue molecular traits (row-filtered at
+  download). Downloads are streamed and atomic with a `<out>.meta.json`
+  provenance sidecar; `--keep-ids` restricts a download to a reference's
+  variants; `--dry-run` prints the resolved plan. `all_meta_af` (GBMI,
+  COVID-HGI) joins the frequency aliases. The suite stays offline through
+  an injectable opener; endpoints were verified against the live services.
+- An AI-assistance disclaimer in the README and the guide: parts of the code
+  and documentation were generated with AI tools and reviewed by the
+  maintainer.
 - References: README and docs/guide.md cite the methods implemented — DENTIST
   (the LD-consistency screen), the SD/AF checks and per-variant N imputation,
   the PGS Catalog scoring format, the GWAS Catalog `hm_` layout, and the
