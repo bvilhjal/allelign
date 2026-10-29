@@ -7,28 +7,23 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 ### Changed
 
 - Package authorship metadata (`pyproject.toml`, `CITATION.cff`) records the
-  bvilhjal account rather than a personal name; the LICENSE keeps the
-  copyright name.
+  bvilhjal account; the LICENSE keeps the copyright name.
+- Documentation trimmed: a shorter README command list, a plain reference
+  list, a leaner walkthrough.
 
 ### Added
 
-- `allelign download` (and `parse_ref`, `resolve_ref`, `download_ref`,
-  `read_keep_ids`): resolve and fetch published summary statistics and PGS
-  scores — GWAS Catalog harmonised accessions, PGS Catalog scores
-  (harmonised preferred), FinnGen endpoints, COVID-19 HGI analyses, GBMI
-  ancestry strata and eQTL Catalogue molecular traits (row-filtered at
-  download). Downloads are streamed and atomic with a `<out>.meta.json`
-  provenance sidecar; `--keep-ids` restricts a download to a reference's
-  variants; `--dry-run` prints the resolved plan. `all_meta_af` (GBMI,
-  COVID-HGI) joins the frequency aliases. The suite stays offline through
-  an injectable opener; endpoints were verified against the live services.
-- An AI-assistance disclaimer in the README and the guide: parts of the code
-  and documentation were generated with AI tools and reviewed by the
-  maintainer.
-- A hands-on walkthrough (docs/walkthrough.md: download → inspect → clean →
-  align → scores, with the records each step writes) and the same flow as an
-  executable notebook (docs/walkthrough.ipynb), both linked from the README
-  and shipped in sdists.
+- `allelign download` (`parse_ref`, `resolve_ref`, `download_ref`,
+  `read_keep_ids`): fetch published sumstats and PGS scores by reference
+  (GWAS Catalog, PGS Catalog, FinnGen, COVID-HGI, GBMI, eQTL Catalogue;
+  the eQTL trait is row-filtered at download), streamed and atomic with a
+  `<out>.meta.json` provenance sidecar. `--keep-ids` restricts a download
+  to a reference's variants; `--dry-run` prints the resolved plan.
+  `all_meta_af` joins the frequency aliases. The suite runs offline through
+  an injectable opener; endpoints verified against the live services.
+- An AI-assistance note in the README and the guide.
+- A CLI walkthrough (docs/walkthrough.md) and an executable notebook
+  (docs/walkthrough.ipynb).
 - References: README and docs/guide.md cite the methods implemented — DENTIST
   (the LD-consistency screen), the SD/AF checks and per-variant N imputation,
   the PGS Catalog scoring format, the GWAS Catalog `hm_` layout, and the

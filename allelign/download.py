@@ -333,39 +333,34 @@ def resolve_ref(ref, *, build=None, opener=None):
         return _resolve_pgs(parsed["pgs_id"], build, opener)
     if provider == "finngen":
         label = f"FinnGen {parsed['release']} {parsed['endpoint']}"
-        url = finngen_url(parsed["release"], parsed["endpoint"])
-        plan = {"ref": ref.strip().upper(), "provider": "finngen",
-                "label": label, "url": url, "genome_build": "GRCh38",
-                "trait": label,
-                "note": "beta is per ALT; af_alt is the effect-allele "
-                        "frequency; rsids may be comma-joined"}
+        extra = {"url": finngen_url(parsed["release"],
+                                    parsed["endpoint"]),
+                 "genome_build": "GRCh38",
+                 "note": "beta is per ALT; af_alt is the effect-allele "
+                         "frequency; rsids may be comma-joined"}
     elif provider == "covidhgi":
         label = f"COVID-HGI R7 {parsed['analysis']}"
-        url = covidhgi_url(parsed["analysis"])
-        plan = {"ref": ref.strip().upper(), "provider": "covidhgi",
-                "label": label, "url": url, "genome_build": "GRCh37",
-                "trait": label,
-                "note": "all_inv_var_meta_effective is the per-variant "
-                        "effective N; the ALL-population file"}
+        extra = {"url": covidhgi_url(parsed["analysis"]),
+                 "genome_build": "GRCh37",
+                 "note": "all_inv_var_meta_effective is the per-variant "
+                         "effective N; the ALL-population file"}
     elif provider == "gbmi":
-        label = f"GBMI {parsed['endpoint']} {parsed['stratum']} " \
-                f"({GBMI_RELEASE})"
-        url = gbmi_url(parsed["endpoint"], parsed["stratum"])
-        plan = {"ref": ref.strip().upper(), "provider": "gbmi",
-                "label": label, "url": url, "genome_build": "GRCh38",
-                "trait": label,
-                "note": "beta is per ALT; per-variant N_case and N_ctrl "
-                        "columns, no single N"}
+        label = (f"GBMI {parsed['endpoint']} {parsed['stratum']} "
+                 f"({GBMI_RELEASE})")
+        extra = {"url": gbmi_url(parsed["endpoint"], parsed["stratum"]),
+                 "genome_build": "GRCh38",
+                 "note": "beta is per ALT; per-variant N_case and N_ctrl "
+                         "columns, no single N"}
     else:
         label = f"eQTL Catalogue {parsed['dataset']} {parsed['trait']}"
-        url = eqtl_url(parsed["study"], parsed["dataset"])
-        plan = {"ref": ref.strip().upper(), "provider": "eqtl",
-                "label": label, "url": url, "genome_build": "GRCh38",
-                "trait": label,
-                "row_filter": (EQTL_ROW_FILTER_COLUMN, parsed["trait"]),
-                "note": "rows filtered to the molecular trait at download; "
-                        "no sample-size column (supply N)"}
-    plan.update(_head(url, label, opener))
+        extra = {"url": eqtl_url(parsed["study"], parsed["dataset"]),
+                 "genome_build": "GRCh38",
+                 "row_filter": (EQTL_ROW_FILTER_COLUMN, parsed["trait"]),
+                 "note": "rows filtered to the molecular trait at "
+                         "download; no sample-size column (supply N)"}
+    plan = {"ref": ref.strip().upper(), "provider": provider,
+            "label": label, "trait": label, **extra}
+    plan.update(_head(plan["url"], label, opener))
     return plan
 
 

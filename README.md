@@ -57,14 +57,12 @@ allelign clean gwas.tsv.gz -o clean.tsv.gz --status-out status.tsv
 allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --sumstats-build GRCh38 --reference-build GRCh37 --reanchor-on-identifier
 allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --ld-screen --ld-keep eur_samples.txt --status-out status.tsv
 allelign pgs-export prs.weights.tsv -o PGS_my.txt --genome-build GRCh37
-allelign download GCST91000728 -o gwas.h.tsv.gz                # GWAS Catalog
-allelign download FINNGEN:R11:I9_AF -o finngen.tsv.gz          # FinnGen, and the providers below
-allelign download EQTL:QTS000001:QTD000001:ENSG00000008128 -o eqtl.tsv.gz
+allelign download GCST91000728 -o gwas.h.tsv.gz          # GWAS Catalog; other providers below
 allelign download GCST91000728 -o gwas.h.tsv.gz --keep-ids ref.bim
-allelign download PGS000337 -o score.txt.gz --build GRCh38 --dry-run
+allelign download PGS000337 -o score.txt.gz --dry-run
 ```
 
-Each command writes `<out>.log.json` with the parse, QC, harmonisation and coverage records; `download` writes a `<out>.meta.json` provenance sidecar (URL, provider, trait, SHA-256, filter counts) instead.
+Each command writes `<out>.log.json` with the parse, QC, harmonisation and coverage records; `download` writes a `<out>.meta.json` provenance sidecar (URL, SHA-256, filter counts) instead.
 
 ## What it covers
 
@@ -76,7 +74,7 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
   - Neale `chr:pos:ref:alt`;
   - FinnGen;
   - effective N from case and control counts.
-- **Downloading.** `allelign download` resolves a published study by reference — GWAS Catalog (`GCST…`), PGS Catalog (`PGS…`), FinnGen, COVID-HGI, GBMI, eQTL Catalogue — checks the URL, streams it locally with a provenance sidecar, and can keep only the rows a reference can match.
+- **Downloading.** `allelign download` fetches a published study by reference (GWAS Catalog, PGS Catalog, FinnGen, COVID-HGI, GBMI, eQTL Catalogue), optionally restricted to the rows a reference can match, with a provenance sidecar.
 - **Alignment.** ldpred3's harmoniser:
   - identifier matching with coordinate checks, so a build mix-up is unmatched rather than silently accepted;
   - strand flips;
@@ -104,37 +102,15 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
 
 ## References
 
-The methods allelign implements:
-
-- Chen W, Wu Y, Zheng Z, et al. [Improved analyses of GWAS summary
-  statistics by reducing data heterogeneity and
-  errors](https://doi.org/10.1038/s41467-021-27438-7). *Nature
-  Communications* (2021). The DENTIST statistic behind the LD-consistency
-  screen.
-- Privé F, Arbel J, Aschard H, et al. [Identifying and correcting for
-  misspecifications in GWAS summary statistics and polygenic
-  scores](https://doi.org/10.1016/j.xhgg.2022.100136). *HGG Advances*
-  (2022). The SD-consistency and frequency checks, and the per-variant N
-  imputation.
-- Lambert SA, Gil L, Jupp S, et al. [The Polygenic Score Catalog as an open
-  database for reproducibility and systematic
-  evaluation](https://doi.org/10.1038/s41588-021-00783-5). *Nature
-  Genetics* (2021). The scoring-file format `read_scoring_file` parses.
-- Sollis E, Mosaku A, Abid A, et al. [The NHGRI-EBI GWAS Catalog:
-  knowledgebase and deposition
-  resource](https://doi.org/10.1093/nar/gkac1010). *Nucleic Acids Research*
-  (2023). The harmonised `hm_` deposit layout.
-- Yengo L, Vedantam S, Marouli E, et al. [A saturated map of common genetic
-  variants associated with human
-  height](https://doi.org/10.1038/s41586-022-05275-y). *Nature* (2022).
-  The LD-screen example in the guide.
+- Chen W, Wu Y, Zheng Z, et al. [Improved analyses of GWAS summary statistics by reducing data heterogeneity and errors](https://doi.org/10.1038/s41467-021-27438-7). *Nature Communications* (2021). The LD-consistency screen is DENTIST's statistic.
+- Privé F, Arbel J, Aschard H, et al. [Identifying and correcting for misspecifications in GWAS summary statistics and polygenic scores](https://doi.org/10.1016/j.xhgg.2022.100136). *HGG Advances* (2022). Source of the SD and frequency checks and the per-variant N imputation.
+- Lambert SA, Gil L, Jupp S, et al. [The Polygenic Score Catalog as an open database for reproducibility and systematic evaluation](https://doi.org/10.1038/s41588-021-00783-5). *Nature Genetics* (2021).
+- Sollis E, Mosaku A, Abid A, et al. [The NHGRI-EBI GWAS Catalog: knowledgebase and deposition resource](https://doi.org/10.1093/nar/gkac1010). *Nucleic Acids Research* (2023).
+- Yengo L, Vedantam S, Marouli E, et al. [A saturated map of common genetic variants associated with human height](https://doi.org/10.1038/s41586-022-05275-y). *Nature* (2022). The screen example in the guide uses its chr22 statistics.
 
 ## AI assistance
 
-Parts of allelign's code and documentation were generated with the assistance
-of AI tools and reviewed by the maintainer. As with any analysis software,
-validate its behaviour on inputs you understand before relying on it; see the
-[LICENSE](LICENSE) for the warranty terms.
+Parts of the code and documentation were generated with AI assistance and reviewed by the maintainer. The licence terms are unchanged.
 
 ## Status
 

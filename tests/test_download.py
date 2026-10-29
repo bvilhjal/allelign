@@ -195,7 +195,8 @@ def test_resolve_pgs_without_harmonised_uses_submitted():
 
 def test_download_verbatim_writes_sidecar(tmp_path):
     body = b"#chrom\tpos\n1\t100\n1\t200\n"
-    opener = FakeOpener({GBMI_URL: _Reusable(body, len(body))})
+    opener = FakeOpener({GBMI_URL: FakeResponse(
+        body, headers={"Content-Length": len(body)})})
     out = tmp_path / "gbmi.tsv.gz"
     record = dl.download_ref("GBMI:ASTHMA:EUR", out, opener=opener)
     assert out.read_bytes() == body
@@ -205,40 +206,6 @@ def test_download_verbatim_writes_sidecar(tmp_path):
     assert sidecar["n_bytes_written"] == len(body)
     assert record["genome_build"] == "GRCh38"
     assert sidecar["ref"] == "GBMI:ASTHMA:EUR"
-
-
-class _Reusable:
-    """HEAD and GET views over one body: length for the check, then bytes."""
-
-    def __init__(self, body, length):
-        self._body = body
-        self._length = length
-        self._pos = 0
-
-    def __call__(self):
-        return self
-
-    def __enter__(self):
-        self._pos = 0
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    @property
-    def headers(self):
-        return {"Content-Length": self._length}
-
-    def read(self, n=-1):
-        if n is None or n < 0:
-            chunk, self._pos = self._body[self._pos:], len(self._body)
-        else:
-            chunk = self._body[self._pos:self._pos + n]
-            self._pos += len(chunk)
-        return chunk
-
-    def __iter__(self):
-        yield from self._body.splitlines(keepends=True)
 
 
 FINNGEN_HEADER = ("rsids\t#chrom\tpos\tref\talt\tbeta\tsebeta\t"
@@ -255,7 +222,8 @@ def _gz(text_lines):
 
 def test_download_keep_ids_streams_and_roundtrips(tmp_path):
     body = _gz([FINNGEN_HEADER] + FINNGEN_ROWS)
-    opener = FakeOpener({FINNGEN_URL: _Reusable(body, len(body))})
+    opener = FakeOpener({FINNGEN_URL: FakeResponse(
+        body, headers={"Content-Length": len(body)})})
     out = tmp_path / "finngen.tsv.gz"
     record = dl.download_ref("finngen:r11:i9_af", out,
                              keep_ids={"rs3"}, opener=opener)
@@ -279,8 +247,9 @@ def test_download_eqtl_row_filter(tmp_path):
             "1\t20\tC\tT\tENSG2\t-0.1\t0.01\t0.4\tENSG2",
             "1\t30\tT\tA\tENSG1\t0.2\t0.02\t0.1\tENSG1"]
     eqtl = dl.eqtl_url("QTS000001", "QTD000001")
-    opener = FakeOpener({eqtl: _Reusable(_gz([header] + rows),
-                                         len(_gz([header] + rows)))})
+    body = _gz([header] + rows)
+    opener = FakeOpener({eqtl: FakeResponse(
+        body, headers={"Content-Length": len(body)})})
     out = tmp_path / "eqtl.tsv"
     record = dl.download_ref("EQTL:QTS000001:QTD000001:ENSG1", out,
                              opener=opener)
@@ -296,8 +265,9 @@ def test_download_gbmi_reads_through_alias_table(tmp_path):
               "all_inv_var_meta_effective\tN_case\tN_ctrl")
     rows = ["1\t100\trs1\tA\tG\t0.3\t0.05\t0.01\t1e-3\t50000\t25000\t25000",
             "1\t200\trs2\tC\tT\t0.7\t-0.04\t0.01\t2e-3\t48000\t24000\t24000"]
-    opener = FakeOpener({GBMI_URL: _Reusable(
-        _gz([header] + rows), len(_gz([header] + rows)))})
+    body = _gz([header] + rows)
+    opener = FakeOpener({GBMI_URL: FakeResponse(
+        body, headers={"Content-Length": len(body)})})
     out = tmp_path / "gbmi.tsv.gz"
     dl.download_ref("GBMI:ASTHMA:EUR", out, opener=opener)
     ss = read_sumstats(out)
@@ -321,7 +291,8 @@ def test_download_pgs_scoring_file_roundtrip(tmp_path):
         dl.PGS_SCORE_REST.format(pgs_id="PGS000337"):
             FakeResponse(json.dumps(score)),
         # default build preference falls back to GRCh38 when 37 is absent
-        "https://host/hm38.txt.gz": _Reusable(body, len(body))})
+        "https://host/hm38.txt.gz": FakeResponse(
+            body, headers={"Content-Length": len(body)})})
     out = tmp_path / "pgs.txt.gz"
     record = dl.download_ref("PGS000337", out, opener=opener)
     assert record["genome_build"] == "GRCh38"
@@ -340,7 +311,8 @@ def test_read_keep_ids_from_list_and_bim(tmp_path):
 
 def test_cli_download_and_dry_run(tmp_path, monkeypatch, capsys):
     body = b"rsid\tchr\tpos\nrs1\t1\t100\n"
-    opener = FakeOpener({GBMI_URL: _Reusable(body, len(body))})
+    opener = FakeOpener({GBMI_URL: FakeResponse(
+        body, headers={"Content-Length": len(body)})})
     monkeypatch.setattr(dl, "_open", opener)
     out = tmp_path / "out.tsv"
     assert main(["download", "GBMI:ASTHMA:EUR", "-o", str(out)]) == 0

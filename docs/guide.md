@@ -1,8 +1,7 @@
 # allelign guide
 
-Parts of allelign's code and documentation were generated with the
-assistance of AI tools and reviewed by the maintainer; validate the rules
-below on your own inputs before relying on them.
+Parts of the code and documentation were generated with AI assistance and
+reviewed by the maintainer.
 
 ## 1. Reading summary statistics
 
@@ -172,10 +171,13 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
 | `EQTL:QTS000001:QTD000001:ENSG00000008128` | one eQTL Catalogue molecular trait, filtered at download | GRCh38 |
 | `PGS000337` | PGS Catalog score; harmonised preferred (GRCh37 unless `--build`) | in the file |
 
-- Resolution HEAD-checks the URL, so `--dry-run` announces a download that will not then fail halfway on a 404.
-- The GBMI stratum and the eQTL molecular trait are required, not defaulted: the multi-ancestry meta and the all-traits bulk file are not what a single-trait fit wants.
-- `--keep-ids FILE` (an rsID list, `.bim` or `.pvar`) streams only matching rows; a comma-joined `rsids` cell matches when any part does.
-- A downloaded file is read with the same rules as any other input (`read_sumstats`, `read_scoring_file`); the provider columns are in the alias table.
+- Resolution HEAD-checks the URL, so `--dry-run` announces a download that
+  will not fail halfway on a 404. The GBMI stratum and the eQTL trait are
+  required, not defaulted: the multi-ancestry meta and the all-traits bulk
+  file are not what a single-trait fit wants. `--keep-ids FILE` (an rsID
+  list, `.bim` or `.pvar`) streams only matching rows; a comma-joined
+  `rsids` cell matches on any part. The file is then read with the same
+  rules as any other input; the provider columns are in the alias table.
 
 ## 7. References
 
