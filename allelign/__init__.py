@@ -7,7 +7,7 @@ number. NumPy-only; Numba and SciPy speed up the parser and the LD screen when
 installed.
 """
 
-__version__ = "0.1.0.dev8"
+__version__ = "0.1.0"
 
 from .alleles import (allele_orientation, is_ambiguous, normalize_chrom,
                       reverse_complement)

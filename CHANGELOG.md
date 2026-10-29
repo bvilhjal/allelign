@@ -4,8 +4,12 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-29
+
 ### Added
 
+- First public release, consolidating 0.1.0.dev1 through 0.1.0.dev8
+  (recorded below).
 - Public-release packaging: a PyPI publish workflow on GitHub releases
   (PyPI trusted publishing), README install-from-GitHub instructions and CI
   badge, trove classifiers and project URLs in `pyproject.toml`, and a
