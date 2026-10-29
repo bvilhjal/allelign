@@ -40,8 +40,10 @@ above are documented differences.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import math
 import os
+from pathlib import Path
 import warnings
 
 import numpy as np
@@ -370,12 +372,54 @@ def _n_plan(colmap, lower, overrides, forced_n):
     return None, None
 
 
+def _resolve_source(path):
+    """``(local path, provenance or None)`` for a file path or a source ref.
+
+    A bare reference (``GCST006630``, ``FINNGEN:R11:I9_AF``, ...) that is not
+    an existing local file is fetched once into the download cache (see
+    :func:`allelign.download.fetch_ref`); provenance is read back from the
+    cached file's sidecar. A submitted, not Catalog-harmonised, GWAS file
+    warns: its build and allele conventions are the submitter's.
+    """
+    text = os.fspath(path)
+    if not isinstance(text, str) or os.path.exists(text):
+        return text, None
+    from .download import fetch_ref, parse_ref
+    parsed = parse_ref(text)
+    if parsed is None:
+        return text, None
+    ref = text.strip().upper()
+    if parsed["provider"] == "pgs":
+        raise ValueError(f"{ref} is a PGS Catalog score, not summary "
+                         "statistics; fetch it with download_ref(...) and "
+                         "read it with read_scoring_file(...)")
+    fetched = fetch_ref(ref)
+    provenance = {"ref": ref, "provider": parsed["provider"],
+                  "file": str(fetched)}
+    try:
+        meta = json.loads(Path(str(fetched) + ".meta.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    for field in ("url", "harmonised", "genome_build", "trait", "sha256",
+                  "note"):
+        if meta.get(field) is not None:
+            provenance[field] = meta[field]
+    if provenance.get("harmonised") is False:
+        warnings.warn(f"{ref}: using the submitted summary-statistics "
+                      "file, which the GWAS Catalog has not harmonised; "
+                      "genome build and allele conventions are as "
+                      "submitted", RuntimeWarning, stacklevel=3)
+    return str(fetched), provenance
+
+
 def detect_columns(path, **col_overrides):
     """Peek at the header and report the detected column mapping.
 
     Returns ``(header, mapping)`` with ``mapping = {field: column name}`` for
-    every resolved field. Reads only the first line.
+    every resolved field. Reads only the first line. ``path`` may be a source
+    reference, as in :func:`read_sumstats`.
     """
+    path, _provenance = _resolve_source(path)
     with open_text(path) as fh:
         _delim, header = _read_header(fh)
     colmap, _layout = _build_colmap(header, col_overrides)
@@ -392,6 +436,7 @@ def inspect_columns(path, *, n_eff=None, n_cases=None, n_controls=None,
     constant N; strings name columns or their zero-based indices.
     """
     forced_n = _n_arguments(n_eff, n_cases, n_controls, col_overrides)
+    path, provenance = _resolve_source(path)
     with open_text(path) as fh:
         delim, header = _read_header(fh)
     colmap, layout = _build_colmap(header, col_overrides)
@@ -406,13 +451,16 @@ def inspect_columns(path, *, n_eff=None, n_cases=None, n_controls=None,
         missing.append("se/pval")
     if source is None:
         missing.append("n_eff")
-    return {"header": header, "delimiter": delim or "whitespace",
+    info = {"header": header, "delimiter": delim or "whitespace",
             "mapping": {field: header[i] for field, i in colmap.items()},
             "layout": {k: (header[v] if isinstance(v, int) and k != "saige"
                            and not isinstance(v, bool) else v)
                        for k, v in layout.items()},
             "n_source": source if detail is None else f"{source}:{detail}",
             "missing": missing}
+    if provenance is not None:
+        info["source"] = provenance
+    return info
 
 
 def _to_float(s):
@@ -467,6 +515,52 @@ def _z_from_log10p(token):
     return _z_from_log_tail(-x * math.log(10.) - math.log(2.))
 
 
+def _coords_from_id(token):
+    """``(chrom, pos)`` packed in a ``CHR:POS[:...]`` id, or ``None``."""
+    head, sep, rest = str(token).partition(":")
+    if not sep:
+        return None
+    pos_text = rest.partition(":")[0]
+    chrom = head[3:] if head.lower().startswith("chr") else head
+    chrom = chrom.strip().upper()
+    if chrom.isdigit():
+        if not 1 <= int(chrom) <= 22:
+            return None
+        chrom = str(int(chrom))
+    elif chrom not in ("X", "Y", "M", "MT"):
+        return None
+    if not pos_text.isdigit() or int(pos_text) == 0:
+        return None
+    return chrom, int(pos_text)
+
+
+def _fill_coords_from_id(ss, want_chrom, want_pos):
+    """Fill missing chrom/pos from packed ids in place; count of rows filled.
+
+    Only the missing fields are touched, and a token that is not plainly
+    ``CHR:POS`` keeps the empty coordinate: a guessed position is worse
+    than a missing one. A 100-id probe keeps rsID-only files off the loop.
+    """
+    ids = np.asarray(ss.id, dtype=object)
+    if not any(_coords_from_id(token) for token in ids[:100]):
+        return 0
+    chrom = np.empty(len(ids), dtype=object)
+    chrom[:] = ""
+    pos = np.zeros(len(ids), dtype=np.int64)
+    filled = 0
+    for i, token in enumerate(ids):
+        coords = _coords_from_id(token)
+        if coords is None:
+            continue
+        chrom[i], pos[i] = coords
+        filled += 1
+    if want_chrom:
+        ss.chrom = chrom
+    if want_pos:
+        ss.pos = pos
+    return filled
+
+
 def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
                   require_n=True, **col_overrides):
     """Read a GWAS summary-statistics file into a :class:`Sumstats`.
@@ -477,7 +571,11 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
         Delimited text (tab, comma or whitespace, auto-detected), optionally
         gzip/bgzip compressed. Fields are split on that delimiter with no
         CSV quoting: a comma inside a field shifts the later columns, so use
-        tabs when a field can contain a comma.
+        tabs when a field can contain a comma. A bare source reference
+        (``GCST006630``, ``FINNGEN:R11:I9_AF``, ...) that is not an existing
+        local file is downloaded once into the cache of
+        :mod:`allelign.download` and read from there; ``parse_log["source"]``
+        then records its provenance.
     n_eff : float or str, optional
         A number **overrides** any per-variant N and flattens every row to that
         constant (the low-level escape hatch; :func:`anchor_n_eff` instead keeps
@@ -498,7 +596,7 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
     dropped with a warning; ``parse_log`` records their count.
     """
     forced_n = _n_arguments(n_eff, n_cases, n_controls, col_overrides)
-    path = os.fspath(path)
+    path, provenance = _resolve_source(path)
     with open_text(path) as fh:
         delim, header = _read_header(fh)
         colmap, layout = _build_colmap(header, col_overrides)
@@ -525,6 +623,16 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
 
         def finish(ss):
             log = ss.parse_log
+            if provenance is not None:
+                log["source"] = provenance
+            # METAL-style files may pack the coordinates into the id
+            # (MarkerName CHR:POS:TYPE) with no chrom/pos columns at all;
+            # unpack them there, and only there.
+            if "chrom" not in colmap or "pos" not in colmap:
+                filled = _fill_coords_from_id(ss, "chrom" not in colmap,
+                                               "pos" not in colmap)
+                if filled:
+                    log["coords_from_id"] = filled
             log["columns"] = {field: header[i] for field, i in colmap.items()}
             if "test" in colmap:
                 log["accepted_test_values"] = sorted(_ADDITIVE_TESTS)

@@ -61,6 +61,8 @@ allelign pgs-export prs.weights.tsv -o PGS_my.txt --genome-build GRCh37
 allelign download GCST91000728 -o gwas.h.tsv.gz          # GWAS Catalog; other providers below
 allelign download GCST91000728 -o gwas.h.tsv.gz --keep-ids ref.bim
 allelign download PGS000337 -o score.txt.gz --dry-run
+allelign download GCST006630                             # into the cache; prints its path
+allelign align GCST006630 --reference ref.bim -o aligned.tsv.gz   # refs work anywhere a file does
 ```
 
 Each command writes `<out>.log.json` with the parse, QC, harmonisation and coverage records; `download` writes a `<out>.meta.json` provenance sidecar (URL, SHA-256, filter counts) instead.
@@ -75,7 +77,7 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
   - Neale `chr:pos:ref:alt`;
   - FinnGen;
   - effective N from case and control counts.
-- **Downloading.** `allelign download` fetches a published study by reference (GWAS Catalog, PGS Catalog, FinnGen, COVID-HGI, GBMI, eQTL Catalogue), optionally restricted to the rows a reference can match, with a provenance sidecar.
+- **Downloading.** `allelign download` fetches a published study by reference (GWAS Catalog, PGS Catalog, FinnGen, COVID-HGI, GBMI, eQTL Catalogue), optionally restricted to the rows a reference can match, with a provenance sidecar. A GWAS Catalog study is harmonised when the Catalog publishes it so, else its one submitted file (marked `harmonised: false`). The same bare reference works anywhere a sumstats file does (`allelign align GCST006630 ...`, `read_sumstats("GCST006630")`): it is downloaded once into `~/.cache/allelign` (`$ALLELIGN_CACHE_DIR`) and reused offline.
 - **Alignment.** ldpred3's harmoniser:
   - identifier matching with coordinate checks, so a build mix-up is unmatched rather than silently accepted;
   - strand flips;

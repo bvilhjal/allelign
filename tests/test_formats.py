@@ -412,3 +412,21 @@ def test_explicit_count_column_requires_its_partner(tmp_path):
     for read in (read_sumstats, inspect_columns):
         with pytest.raises(ValueError, match='require both counts'):
             read(path, n_cases='CasesCustom')
+
+
+def test_metal_markername_supplies_coordinates(tmp_path, jit):
+    # Evangelou-style METAL output (e.g. GCST006630 as submitted): no
+    # chrom/pos columns; MarkerName packs CHR:POS:TYPE on build 37.
+    path = _write(tmp_path,
+                  "MarkerName Allele1 Allele2 Freq1 Effect StdErr P "
+                  "TotalSampleSize N_effective\n"
+                  "10:100000625:SNP a g 0.5663 -0.0432 0.0174 0.01294 "
+                  "757601 756275\n"
+                  "X:12345:SNP c t 0.2 0.01 0.02 0.5 757601 700000\n"
+                  "rs999 a t 0.5 0.03 0.03 0.4 757601 1000\n")
+    ss = read_sumstats(path)
+    assert list(np.asarray(ss.chrom, dtype=object)) == ["10", "X", ""]
+    assert list(np.asarray(ss.pos)) == [100000625, 12345, 0]
+    assert ss.parse_log["coords_from_id"] == 2
+    assert list(np.asarray(ss.id, dtype=object))[0] == "10:100000625:SNP"
+    assert list(np.asarray(ss.ea, dtype=object))[:1] == ["A"]

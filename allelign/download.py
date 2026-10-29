@@ -12,7 +12,10 @@ Supported references (case-insensitive; ``GCST``/``PGS`` accessions bare):
 ==============  ==============================================================
 reference        file
 ==============  ==============================================================
-``GCST91000728`` GWAS Catalog harmonised summary statistics
+``GCST91000728`` GWAS Catalog summary statistics, harmonised when the
+Catalog publishes a harmonised file, else the one submitted file (the
+plan and sidecar then say ``harmonised: false``; several submitted files
+are refused rather than guessed)
 ``FINNGEN:R11:I9_AF``  one FinnGen release endpoint (GRCh38)
 ``COVIDHGI:R7:C2``     one COVID-19 HGI release-7 analysis (GRCh37)
 ``GBMI:ASTHMA:EUR``    one GBMI endpoint in one ancestry stratum (GRCh38)
@@ -27,6 +30,11 @@ meta: a single-ancestry LD reference cannot represent it. The same rule
 keeps the eQTL Catalogue trait mandatory: a dataset's bulk file holds every
 trait it tested.
 
+:func:`fetch_ref` returns a local path for a reference, downloading once
+into :func:`cache_dir` (``$ALLELIGN_CACHE_DIR``, else ``~/.cache/allelign``)
+and reusing it afterwards without touching the network. It is what lets
+:func:`allelign.read_sumstats` accept a bare ``GCST006630``.
+
 Network access uses :data:`USER_AGENT` over ``urllib`` only; the opener is
 injectable so the suite runs offline.
 """
@@ -40,6 +48,7 @@ import os
 import re
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -48,7 +57,8 @@ from pathlib import Path
 from . import __version__
 from .sumstats import COLUMN_ALIASES
 
-__all__ = ["parse_ref", "resolve_ref", "download_ref", "read_keep_ids"]
+__all__ = ["cache_dir", "download_ref", "fetch_ref", "parse_ref",
+           "read_keep_ids", "resolve_ref"]
 
 GWAS_FTP = "https://ftp.ebi.ac.uk/pub/databases/gwas"
 SUMSTATS_FTP = f"{GWAS_FTP}/summary_statistics"
@@ -226,14 +236,21 @@ def _harmonised_index(opener):
     return out
 
 
-def _gwas_study_metadata(accession, opener):
-    """Trait, sample and publication fields from the Catalog's study API."""
+def _gwas_study(accession, opener):
+    """The Catalog's validated study record for one accession."""
     payload = _fetch_json(GWAS_STUDY_REST.format(accession=accession),
                           accession, opener)
     if (not isinstance(payload, dict)
             or payload.get("accession_id") != accession):
         raise ValueError(f"{accession}: invalid study metadata from the "
                          "GWAS Catalog")
+    return payload
+
+
+def _gwas_study_metadata(accession, opener, payload=None):
+    """Trait, sample and publication fields from the Catalog's study API."""
+    if payload is None:
+        payload = _gwas_study(accession, opener)
     sample = payload.get("initial_sample_size") or ""
     trait = payload.get("disease_trait") or accession
     if not isinstance(sample, str) or not isinstance(trait, str):
@@ -256,22 +273,90 @@ def _gwas_study_metadata(accession, opener):
     return meta
 
 
-def _resolve_gwas(accession, opener):
-    index = _harmonised_index(opener)
-    relative = index.get(accession)
-    if relative is None:
+_SUBMITTED_SUFFIXES = (".tsv.gz", ".txt.gz", ".csv.gz", ".tsv", ".txt",
+                       ".csv", ".gz")
+
+
+def _gwas_ftp_dir(accession, payload=None):
+    """The study's FTP directory: the study record's, else its 1000-batch."""
+    recorded = (payload or {}).get("full_summary_stats")
+    if isinstance(recorded, str) and accession in recorded:
+        return ("https://" + recorded.split("://", 1)[-1]).rstrip("/")
+    digits, number = accession[4:], int(accession[4:])
+    low = (number - 1) // 1000 * 1000 + 1
+    batch = f"GCST{low:0{len(digits)}d}-GCST{low + 999:0{len(digits)}d}"
+    return f"{SUMSTATS_FTP}/{batch}/{accession}"
+
+
+def _submitted_gwas_url(accession, payload, opener):
+    """URL of the one submitted sumstats file in the study's FTP directory.
+
+    Zero candidates, and more than one, are both errors: with several files
+    (one per trait or ancestry) no rule here can know which the caller
+    meant, so they are named instead of guessed.
+    """
+    if payload is not None and \
+            payload.get("full_summary_stats_available") is False:
         raise ValueError(f"{accession}: no harmonised summary-statistics "
-                         "file in the GWAS Catalog")
-    url = f"{SUMSTATS_FTP}/{relative}"
-    plan = {"ref": accession, "provider": "gwas", "label": accession,
-            "url": url, "genome_build": None, "trait": accession,
-            "note": "harmonised set; the declared build is in the file "
-                    "header"}
-    plan.update(_head(url, accession, opener))
-    # The study record decorates the sidecar; the indexed file is the
-    # ground truth for whether the download exists.
+                         "file in the GWAS Catalog and the study record "
+                         "reports no full summary statistics")
+    directory = _gwas_ftp_dir(accession, payload)
     try:
-        plan.update(_gwas_study_metadata(accession, opener))
+        listing = _fetch_bytes(directory + "/", accession, opener).decode(
+            "utf-8", "replace")
+    except ValueError as exc:
+        raise ValueError(f"{accession}: no harmonised summary-statistics "
+                         f"file in the GWAS Catalog and its submitted-file "
+                         f"directory could not be listed ({exc})") from exc
+    candidates = {}
+    for href in re.findall(r'href="([^"]+)"', listing):
+        name = urllib.parse.unquote(href)
+        if (href.startswith(("/", "?", "http")) or href.endswith("/")
+                or not name.lower().endswith(_SUBMITTED_SUFFIXES)
+                or "readme" in name.lower()):
+            continue
+        candidates[name] = f"{directory}/{href}"
+    candidates = list(candidates.items())
+    if len(candidates) == 1:
+        return candidates[0][1]
+    if not candidates:
+        raise ValueError(f"{accession}: no harmonised summary-statistics "
+                         f"file in the GWAS Catalog and no submitted "
+                         f"summary-statistics file in {directory}")
+    names = ", ".join(name for name, _url in candidates)
+    raise ValueError(f"{accession}: no harmonised summary-statistics file "
+                     f"in the GWAS Catalog and {len(candidates)} submitted "
+                     f"files ({names}) in {directory}; refusing to guess "
+                     "which one is meant")
+
+
+def _resolve_gwas(accession, opener):
+    relative = _harmonised_index(opener).get(accession)
+    payload = None
+    if relative is not None:
+        plan = {"url": f"{SUMSTATS_FTP}/{relative}", "harmonised": True,
+                "note": "harmonised set; the declared build is in the file "
+                        "header"}
+    else:
+        # No harmonised file: fall back to the submitted one, and say so
+        # everywhere, because its build and allele conventions are the
+        # submitter's, not the Catalog's.
+        try:
+            payload = _gwas_study(accession, opener)
+        except ValueError:
+            payload = None
+        plan = {"url": _submitted_gwas_url(accession, payload, opener),
+                "harmonised": False,
+                "note": "submitted file (not harmonised by the GWAS "
+                        "Catalog); genome build and allele conventions "
+                        "are as submitted"}
+    plan.update({"ref": accession, "provider": "gwas", "label": accession,
+                 "genome_build": None, "trait": accession})
+    plan.update(_head(plan["url"], accession, opener))
+    # The study record decorates the sidecar; the indexed (or listed) file
+    # is the ground truth for whether the download exists.
+    try:
+        plan.update(_gwas_study_metadata(accession, opener, payload))
         if plan.get("trait") and plan["trait"] != accession:
             plan["label"] = f"{accession} ({plan['trait']})"
     except ValueError:
@@ -411,6 +496,12 @@ def download_ref(ref, dest, *, build=None, keep_ids=None, meta=True,
     if opener is None:
         opener = _open
     plan = resolve_ref(ref, build=build, opener=opener)
+    return _download_plan(plan, dest, keep_ids=keep_ids, meta=meta,
+                          opener=opener)
+
+
+def _download_plan(plan, dest, *, keep_ids=None, meta=True, opener):
+    """Stream an already-resolved plan into ``dest``; see download_ref."""
     dest = Path(dest)
     url = plan["url"]
     label = plan["label"]
@@ -454,6 +545,9 @@ def download_ref(ref, dest, *, build=None, keep_ids=None, meta=True,
               "n_bytes_written": dest.stat().st_size,
               "fetched_at": datetime.now(timezone.utc).isoformat()}
     record.update(counts)
+    for field in ("harmonised", "note"):
+        if plan.get(field) is not None:
+            record[field] = plan[field]
     if keep_ids is not None:
         record["keep_ids"] = {"n_ids": len(keep_ids)}
     if meta:
@@ -464,6 +558,74 @@ def download_ref(ref, dest, *, build=None, keep_ids=None, meta=True,
             fh.write(payload.encode("utf-8"))
             fh.write(b"\n")
     return record
+
+
+#: Environment variable naming the download cache directory.
+CACHE_DIR_ENV = "ALLELIGN_CACHE_DIR"
+
+
+def cache_dir():
+    """The download cache: ``$ALLELIGN_CACHE_DIR``, else ``~/.cache/allelign``.
+
+    ``$XDG_CACHE_HOME`` replaces ``~/.cache`` when set.
+    """
+    override = os.environ.get(CACHE_DIR_ENV)
+    if override:
+        return Path(override).expanduser()
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
+    return base / "allelign"
+
+
+def _sidecar(path):
+    return path.with_name(path.name + ".meta.json")
+
+
+def _cached_file(directory):
+    """The one completely downloaded file in a cache directory, or None.
+
+    Complete means its provenance sidecar is beside it: downloads are
+    atomic and the sidecar is written last, so a file without one is
+    never trusted.
+    """
+    if not directory.is_dir():
+        return None
+    files = [p for p in sorted(directory.iterdir())
+             if p.is_file() and not p.name.startswith(".")
+             and not p.name.endswith(".meta.json")]
+    if len(files) == 1 and _sidecar(files[0]).is_file():
+        return files[0]
+    return None
+
+
+def fetch_ref(ref, *, build=None, cache=None, opener=None):
+    """A local file for one source reference, downloading into the cache once.
+
+    The file lands at ``<cache>/<REF>/<remote filename>`` with its
+    provenance sidecar; later calls return it without any network access.
+    Published summary statistics are immutable, so a cached file is never
+    refreshed -- delete it to force a new download. ``cache`` overrides
+    :func:`cache_dir`. Returns a :class:`pathlib.Path`.
+    """
+    if opener is None:
+        opener = _open
+    if parse_ref(ref) is None:
+        # resolve_ref raises the user-readable form of this error.
+        resolve_ref(ref, build=build, opener=opener)
+    key = re.sub(r"[^A-Za-z0-9._-]", "_", ref.strip().upper())
+    directory = (Path(cache) if cache is not None else cache_dir()) / key
+    cached = _cached_file(directory)
+    if cached is not None:
+        return cached
+    plan = resolve_ref(ref, build=build, opener=opener)
+    name = urllib.parse.unquote(
+        urllib.parse.urlparse(plan["url"]).path.rsplit("/", 1)[-1])
+    dest = directory / name
+    if dest.is_file() and _sidecar(dest).is_file():
+        return dest
+    directory.mkdir(parents=True, exist_ok=True)
+    _download_plan(plan, dest, opener=opener)
+    return dest
 
 
 def _write_filtered(lines, header, out, keep_ids, row_filter):

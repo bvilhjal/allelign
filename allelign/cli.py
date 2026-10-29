@@ -188,23 +188,48 @@ def cmd_pgs_export(args):
 
 
 def cmd_download(args):
-    from .download import download_ref, read_keep_ids, resolve_ref
+    from .download import download_ref, fetch_ref, read_keep_ids, resolve_ref
     if args.dry_run:
         plan = resolve_ref(args.ref, build=args.build)
         print(json.dumps(plan, indent=2, sort_keys=True, default=str))
+        return 0
+    if args.out is None:
+        if args.keep_ids:
+            raise ValueError("--keep-ids needs -o: a filtered file must "
+                             "not enter the download cache")
+        if args.no_meta:
+            raise ValueError("--no-meta needs -o: cached files keep their "
+                             "provenance sidecar")
+        dest = fetch_ref(args.ref, build=args.build)
+        note = ""
+        try:
+            with open(f"{dest}.meta.json") as fh:
+                if json.load(fh).get("harmonised") is False:
+                    note = "; submitted file, not harmonised"
+        except (OSError, ValueError):
+            pass
+        print(dest)
+        print(f"allelign: {args.ref} -> {dest} (download cache{note})",
+              file=sys.stderr)
         return 0
     keep_ids = read_keep_ids(args.keep_ids) if args.keep_ids else None
     record = download_ref(args.ref, args.out, build=args.build,
                           keep_ids=keep_ids, meta=not args.no_meta)
     kept = f", kept {record['n_kept']:,} of {record['n_input']:,} rows" \
         if "n_kept" in record else ""
+    note = "; submitted file, not harmonised" \
+        if record.get("harmonised") is False else ""
     print(f"allelign: downloaded {record['label']} -> {args.out} "
-          f"({record['n_bytes_written']:,} bytes{kept})", file=sys.stderr)
+          f"({record['n_bytes_written']:,} bytes{kept}{note})",
+          file=sys.stderr)
     return 0
 
 
 def _add_read_options(p):
-    p.add_argument("sumstats", help="summary-statistics file (.gz accepted)")
+    p.add_argument("sumstats", help="summary-statistics file (.gz accepted) "
+                                    "or source reference (GCST006630, "
+                                    "FINNGEN:R11:I9_AF, ...), downloaded "
+                                    "once into the cache")
     p.add_argument("--column", action="append", metavar="FIELD=COLUMN",
                    help="force a field to a column (name or 0-based index)")
     p.add_argument("--n-eff", type=float, default=None,
@@ -294,7 +319,10 @@ def build_parser():
                     "and download it with a <out>.meta.json provenance "
                     "sidecar.")
     p.add_argument("ref")
-    p.add_argument("-o", "--out", required=True)
+    p.add_argument("-o", "--out", default=None,
+                   help="output file (default: the download cache, "
+                        "~/.cache/allelign or $ALLELIGN_CACHE_DIR; the "
+                        "cached path is printed)")
     p.add_argument("--build", choices=("GRCh37", "GRCh38"), default=None,
                    help="preferred harmonised build for a PGS score "
                         "(default GRCh37, then GRCh38, then the submitted "

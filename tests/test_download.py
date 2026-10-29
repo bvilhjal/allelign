@@ -150,7 +150,13 @@ def test_resolve_gwas_uses_index_rest_and_head():
 
 
 def test_resolve_gwas_unknown_accession():
-    opener = gwas_routes()
+    # Not in the harmonised index, no such study, no submitted-file
+    # directory at its computed 1000-batch either.
+    opener = gwas_routes(**{
+        dl.GWAS_STUDY_REST.format(accession="GCST99999999"):
+            http_error_404(),
+        "https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/"
+        "GCST99999001-GCST100000000/GCST99999999/": http_error_404()})
     with pytest.raises(ValueError, match="no harmonised summary-statistics"):
         dl.resolve_ref("GCST99999999", opener=opener)
 
@@ -330,3 +336,114 @@ def test_cli_download_and_dry_run(tmp_path, monkeypatch, capsys):
     # a malformed reference exits 2 with a readable message
     assert main(["download", "NONSENSE", "-o", str(out2)]) == 2
     assert "expected a reference" in capsys.readouterr().err
+
+
+DBP_DIR = ("https://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/"
+           "GCST006001-GCST007000/GCST006630")
+DBP_URL = DBP_DIR + "/Evangelou_30224653_DBP.txt.gz"
+DBP_STUDY = {"accession_id": "GCST006630",
+             "initial_sample_size": "757,601 European ancestry individuals",
+             "disease_trait": "Diastolic blood pressure",
+             "pubmed_id": 30224653, "full_summary_stats_available": True,
+             "full_summary_stats": "http://ftp.ebi.ac.uk/pub/databases/gwas/"
+                                   "summary_statistics/GCST006001-"
+                                   "GCST007000/GCST006630"}
+DBP_LISTING = ('<a href="?C=N;O=D">Name</a>'
+               '<a href="/pub/databases/gwas/summary_statistics/'
+               'GCST006001-GCST007000/">Parent Directory</a>'
+               '<a href="Evangelou_30224653_DBP.txt.gz">x</a>'
+               '<a href="README_Evangelou_30224653.txt">x</a>')
+SUMSTATS_BODY = _gz([
+    "rsid\tchrom\tpos\teffect_allele\tother_allele\tbeta\tse\t"
+    "effect_allele_frequency\tn",
+    "rs1\t1\t100\tA\tG\t0.01\t0.001\t0.4\t100000",
+    "rs2\t1\t200\tC\tT\t-0.02\t0.002\t0.6\t99000"])
+
+
+def submitted_routes(listing=DBP_LISTING, body=SUMSTATS_BODY):
+    return FakeOpener({
+        dl.HARMONISED_LIST: FakeResponse(HARMONISED_INDEX),
+        dl.GWAS_STUDY_REST.format(accession="GCST006630"):
+            FakeResponse(json.dumps(DBP_STUDY)),
+        DBP_DIR + "/": FakeResponse(listing),
+        DBP_URL: FakeResponse(body, headers={"Content-Length": len(body)}),
+        dl.GWAS_PUBLICATION_REST.format(pmid="30224653"):
+            FakeResponse(json.dumps({"title": "Genetic analysis of over "
+                                              "1 million people"}))})
+
+
+def test_resolve_gwas_falls_back_to_submitted_file():
+    plan = dl.resolve_ref("GCST006630", opener=submitted_routes())
+    assert plan["url"] == DBP_URL
+    assert plan["harmonised"] is False
+    assert "not harmonised" in plan["note"]
+    assert plan["trait"] == "Diastolic blood pressure"
+    assert plan["genome_build"] is None
+
+
+def test_resolve_gwas_refuses_to_guess_among_submitted_files():
+    listing = ('<a href="TraitA.txt.gz">x</a>'
+               '<a href="TraitB.txt.gz">x</a>')
+    with pytest.raises(ValueError, match="refusing to guess") as err:
+        dl.resolve_ref("GCST006630", opener=submitted_routes(listing))
+    assert "TraitA.txt.gz" in str(err.value)
+    assert "TraitB.txt.gz" in str(err.value)
+
+
+def test_fetch_ref_caches_and_reuses(tmp_path):
+    cache = tmp_path / "cache"
+    opener = submitted_routes()
+    first = dl.fetch_ref("GCST006630", cache=cache, opener=opener)
+    assert first == cache / "GCST006630" / "Evangelou_30224653_DBP.txt.gz"
+    assert first.read_bytes() == SUMSTATS_BODY
+    sidecar = json.loads((first.parent /
+                          (first.name + ".meta.json")).read_text())
+    assert sidecar["harmonised"] is False
+    calls = len(opener.calls)
+    # a cached ref reads again with no further network traffic
+    assert dl.fetch_ref("GCST006630", cache=cache, opener=opener) == first
+    assert len(opener.calls) == calls
+
+
+def test_read_sumstats_fetches_bare_gcst(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALLELIGN_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(dl, "_open", submitted_routes())
+    with pytest.warns(RuntimeWarning, match="not.*harmonised"):
+        ss = read_sumstats("GCST006630")
+    assert list(np.asarray(ss.id, dtype=object)) == ["rs1", "rs2"]
+    source = ss.parse_log["source"]
+    assert source["ref"] == "GCST006630"
+    assert source["harmonised"] is False
+    assert source["url"] == DBP_URL
+
+
+def test_read_sumstats_local_file_named_like_ref_wins(tmp_path, monkeypatch):
+    local = tmp_path / "GCST006630"
+    local.write_bytes(gzip.decompress(SUMSTATS_BODY))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(dl, "_open", FakeOpener({}))
+    ss = read_sumstats("GCST006630")
+    assert list(np.asarray(ss.id, dtype=object)) == ["rs1", "rs2"]
+    assert "source" not in ss.parse_log
+
+
+def test_read_sumstats_rejects_pgs_ref(monkeypatch):
+    monkeypatch.setattr(dl, "_open", FakeOpener({}))
+    with pytest.raises(ValueError, match="PGS Catalog score"):
+        read_sumstats("PGS000337")
+
+
+def test_cli_download_without_out_uses_cache(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("ALLELIGN_CACHE_DIR", str(cache))
+    monkeypatch.setattr(dl, "_open", submitted_routes())
+    assert main(["download", "GCST006630"]) == 0
+    captured = capsys.readouterr()
+    dest = cache / "GCST006630" / "Evangelou_30224653_DBP.txt.gz"
+    assert captured.out.strip() == str(dest)
+    assert dest.read_bytes() == SUMSTATS_BODY
+    assert "not harmonised" in captured.err
+    # a filtered download must not enter (and poison) the cache
+    assert main(["download", "GCST006630", "--keep-ids",
+                 str(tmp_path / "ids.txt")]) == 2
+    assert "--keep-ids needs -o" in capsys.readouterr().err

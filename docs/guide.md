@@ -158,13 +158,15 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
 
 ## 6. Downloading public summary statistics
 
-`resolve_ref(ref)` names one published file; `download_ref(ref, dest)` fetches it atomically and writes a `<dest>.meta.json` sidecar (URL, provider, trait, SHA-256, filter counts). On the CLI: `allelign download REF -o OUT [--dry-run] [--keep-ids FILE] [--build GRCh37|GRCh38]`.
+`resolve_ref(ref)` names one published file; `download_ref(ref, dest)` fetches it atomically and writes a `<dest>.meta.json` sidecar (URL, provider, trait, SHA-256, filter counts). On the CLI: `allelign download REF [-o OUT] [--dry-run] [--keep-ids FILE] [--build GRCh37|GRCh38]`.
+
+A bare reference also stands in for the file itself. `fetch_ref(ref)` downloads into the cache (`cache_dir()`: `$ALLELIGN_CACHE_DIR`, else `~/.cache/allelign`) under `<REF>/<remote filename>` and returns it without network access thereafter; published files are immutable, so delete the cached file to force a fresh download. `allelign download REF` without `-o` does the same and prints the cached path. And `read_sumstats("GCST006630")`, `inspect_columns`, `detect_columns` and the `inspect`/`clean`/`align` commands call it for any reference that is not an existing local file (a local file always wins), recording the provenance under `parse_log["source"]`. A `PGS…` reference is refused there: it is a scoring file, not sumstats.
 
 **Table 3. Source references.**
 
 | Reference | File | Build |
 |---|---|---|
-| `GCST91000728` | GWAS Catalog harmonised sumstats; trait and sample from the Catalog API | declared in the file |
+| `GCST91000728` | GWAS Catalog sumstats, harmonised when published so (`harmonised: true`), else the one submitted file (`harmonised: false`; several submitted files are refused and named); trait and sample from the Catalog API | declared in the file / as submitted |
 | `FINNGEN:R11:I9_AF` | one FinnGen endpoint; `rsids` may be comma-joined | GRCh38 |
 | `COVIDHGI:R7:C2` | COVID-19 HGI analysis `A2`/`B1`/`B2`/`C2`, ALL population | GRCh37 |
 | `GBMI:ASTHMA:EUR` | GBMI `052021` endpoint in one ancestry stratum | GRCh38 |
@@ -178,6 +180,16 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
   list, `.bim` or `.pvar`) streams only matching rows; a comma-joined
   `rsids` cell matches on any part. The file is then read with the same
   rules as any other input; the provider columns are in the alias table.
+- A submitted GWAS Catalog file is *not* harmonised: its build and allele
+  conventions are the submitter's (for `GCST006630`, GRCh37 `CHR:POS` ids;
+  when a file has no chrom/pos columns, `read_sumstats` unpacks such packed
+  ids into coordinates and logs `coords_from_id`).
+  The plan, the sidecar, `parse_log["source"]` and a `RuntimeWarning` say
+  so; `--sumstats-build`/`--reanchor-on-identifier` remain yours to set.
+  The substituted file is found in the study's FTP directory (from its
+  Catalog record, else its 1000-accession batch); a filtered download
+  (`--keep-ids`, `--no-meta`) still requires an explicit `-o`, so the
+  cache only ever holds whole published files.
 
 ## 7. References
 

@@ -29,6 +29,14 @@ are written, because the bulk file holds every trait the dataset tested.
 Each download leaves `<out>.meta.json` beside the file: URL, provider,
 trait, SHA-256 and filter counts. Keep it with the data.
 
+You can also skip naming a file at all: `allelign download GCST006630`
+fetches into the cache (`~/.cache/allelign`) and prints its path, and the
+later steps accept the bare reference in place of a file —
+`allelign inspect GCST006630`, `allelign align GCST006630 --reference ...`
+— downloading once and reusing the cached file. Where the Catalog has no
+harmonised file (as for `GCST006630`), the submitted file is used and
+flagged as such; its build and alleles are the submitter's.
+
 ## 2. Inspect
 
 ```bash

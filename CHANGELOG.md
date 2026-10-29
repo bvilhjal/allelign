@@ -4,15 +4,25 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
-### Changed
-
-- Package authorship metadata (`pyproject.toml`, `CITATION.cff`) records the
-  bvilhjal account; the LICENSE keeps the copyright name.
-- Documentation trimmed: a shorter README command list, a plain reference
-  list, a leaner walkthrough.
-
 ### Added
 
+- A bare source reference anywhere a sumstats file goes: `read_sumstats`,
+  `inspect_columns`, `detect_columns` and `inspect`/`clean`/`align` accept
+  e.g. `GCST006630` when no such local file exists, downloading once via the
+  new `fetch_ref` into `cache_dir()` (`$ALLELIGN_CACHE_DIR`, else
+  `~/.cache/allelign`) and reusing it offline; provenance lands in
+  `parse_log["source"]`. `allelign download REF` without `-o` fills the
+  cache and prints the path (`--keep-ids`/`--no-meta` still need `-o`).
+- GWAS Catalog studies with no harmonised file fall back to their one
+  submitted file (found in the study's FTP directory), marked
+  `harmonised: false` in the plan, sidecar and a warning; zero or several
+  submitted files are an error naming them, never a guess. Previously such
+  studies (e.g. `GCST006630`) could not be downloaded at all.
+- `read_sumstats` unpacks `CHR:POS[:...]` identifiers (METAL `MarkerName`)
+  into chrom/pos when the file has no coordinate columns
+  (`parse_log["coords_from_id"]` counts them), so such submitted files can
+  match a reference positionally. Files with coordinate columns are
+  unchanged.
 - `allelign download` (`parse_ref`, `resolve_ref`, `download_ref`,
   `read_keep_ids`): fetch published sumstats and PGS scores by reference
   (GWAS Catalog, PGS Catalog, FinnGen, COVID-HGI, GBMI, eQTL Catalogue;
@@ -28,6 +38,13 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
   (the LD-consistency screen), the SD/AF checks and per-variant N imputation,
   the PGS Catalog scoring format, the GWAS Catalog `hm_` layout, and the
   height-GWAS screen example.
+
+### Changed
+
+- Package authorship metadata (`pyproject.toml`, `CITATION.cff`) records the
+  bvilhjal account; the LICENSE keeps the copyright name.
+- Documentation trimmed: a shorter README command list, a plain reference
+  list, a leaner walkthrough.
 ## [0.1.0] - 2026-10-29
 
 ### Added
