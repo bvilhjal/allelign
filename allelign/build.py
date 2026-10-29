@@ -51,7 +51,7 @@ def check_build(declared, reference, *, what="summary statistics",
     if declared != reference:
         raise BuildMismatchError(
             f"{what} are declared {declared} but {against} is {reference}. "
-            f"Lift the statistics over to {reference} (UCSC liftOver, CrossMap "
-            "or bcftools +liftover, keeping the chain and failed mappings), or "
-            "re-anchor on identifiers (allelign.reanchor_on_identifier).")
+            f"Lift the statistics over to {reference} (allelign.liftover, "
+            "UCSC liftOver, CrossMap or bcftools +liftover), or re-anchor on "
+            "identifiers (allelign.reanchor_on_identifier).")
     return {"declared": declared, "reference": reference, "status": "match"}

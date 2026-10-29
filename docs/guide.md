@@ -70,15 +70,18 @@ Chromosome labels normalise as follows: the `chr` prefix and zero padding are dr
 
 `reference_coverage` classifies a thin alignment as build mismatch, absent identifiers, rows rejected at a matched locus, or a sparse (hits-only) deposit. `coverage_message` states the cause and the remedy.
 
-For a known build mismatch:
+### Genome builds
 
+`harmonize` checks a poorly matched alignment for a build mismatch by itself (`liftover="auto"`, the default). When fewer than half of the reference variants match and a sample of the unmatched rows shows the mismatch signature (identifiers the reference holds at other coordinates, or rows with coordinates that match almost nothing), `detect_build` asks which UCSC liftover makes the rows agree with the reference. If one does, the rows are lifted over and matched again. The result is kept when it matches at least twice as many variants, with a `RuntimeWarning` and `log["liftover"]` as the record. Inputs under 1,000 rows and well-matched alignments are never checked; `liftover=False` turns the check off. The two UCSC chain files are downloaded once into the cache and checked against their SHA-256.
+
+- `detect_build(ss, variants)` compares a sample of positions with the reference as they are and after each liftover; `relation` is `same`, `differ` (with both builds named) or `unclear`. No identifiers are needed.
+- `liftover(ss, source, target)` lifts rows in place. A row that cannot be lifted to a primary chromosome loses its coordinates and identifier, and a reversed block reverse-complements the alleles, so `beta` counts the same allele.
 - `check_build` refuses mismatched declared builds.
 - `reanchor_on_identifier` moves rows onto the reference's coordinates for their identifiers. It drops rows whose identifier is absent, held at several loci, or missing. It is not a liftover.
 
-The CLI permits mismatched declarations only with `--reanchor-on-identifier`.
-Its build log retains `declared` and `reference`, records `status="reanchored"`
-for that mismatch, and identifies the `output` build as the reference build.
-The usual allele checks still apply after reanchoring.
+On the CLI, mismatched `--sumstats-build`/`--reference-build` declarations are lifted over (`status="lifted"`, with a `liftover` record in the log) unless `--reanchor-on-identifier` is given (`status="reanchored"`); with `--no-liftover` they are refused, and the automatic check is off. The build log retains `declared` and `reference` and names the `output` build. The usual allele checks apply afterwards.
+
+On the GWAS Catalog's harmonised triglyceride file (GCST002216, GRCh38) against a GRCh37 HapMap3 reference, the automatic check raised the matched variants from 9,849 to 988,678; 99.9999% of the lifted rows whose rsID the reference holds landed on its position.
 
 `harmonize_weights` applies the same rules to an ldpred3 weights table or a PGS Catalog score, aligns `AF_REF` (`1 - f` on a swap), and reports the matched share of squared weight.
 
@@ -185,7 +188,7 @@ A bare reference also stands in for the file itself. `fetch_ref(ref)` downloads 
   when a file has no chrom/pos columns, `read_sumstats` unpacks such packed
   ids into coordinates and logs `coords_from_id`).
   The plan, the sidecar, `parse_log["source"]` and a `RuntimeWarning` say
-  so; `--sumstats-build`/`--reanchor-on-identifier` remain yours to set.
+  so; a build mismatch is detected and lifted over when the file is aligned.
   The substituted file is found in the study's FTP directory (from its
   Catalog record, else its 1000-accession batch); a filtered download
   (`--keep-ids`, `--no-meta`) still requires an explicit `-o`, so the

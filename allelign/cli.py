@@ -91,19 +91,23 @@ def cmd_align(args):
     from .build import BuildMismatchError, check_build, normalize_build
     from .align import (coverage_message, harmonize, reanchor_on_identifier,
                             reference_coverage)
+    from .lift import liftover
     from .qc import gwas_af_on_counted_allele
     from .sumstats import Sumstats
     from .variants import read_variants
 
+    lift_declared = None
     try:
         build = check_build(args.sumstats_build, args.reference_build)
     except BuildMismatchError:
-        if not args.reanchor_on_identifier:
+        if not args.reanchor_on_identifier and args.no_liftover:
             raise
         build = {"declared": normalize_build(args.sumstats_build),
                  "reference": normalize_build(args.reference_build),
-                 "status": "reanchored"}
-    build["output"] = (build["reference"] if args.reanchor_on_identifier
+                 "status": "reanchored" if args.reanchor_on_identifier else "lifted"}
+        if not args.reanchor_on_identifier:
+            lift_declared = (build["declared"], build["reference"])
+    build["output"] = (build["reference"] if args.reanchor_on_identifier or lift_declared
                        else build["reference"] or build["declared"])
     ref = read_variants(args.reference).freeze()
     ss = _read(args)
@@ -113,14 +117,17 @@ def cmd_align(args):
     sub = ss.subset(keep)
     log = {"allelign": __version__, "parse": ss.parse_log, "qc": qc_log,
            "build": build}
+    if lift_declared:
+        sub, log["liftover"] = liftover(sub, *lift_declared)
     if args.reanchor_on_identifier:
         sub, log["reanchor"], rkeep = reanchor_on_identifier(
             sub, ref, return_keep=True)
         status[rows[~rkeep]] = _st.REANCHOR_DROPPED
         rows = rows[rkeep]
     sub_status = _st.new_status(len(sub)) if args.status_out else None
+    automatic = not (args.no_liftover or lift_declared or args.reanchor_on_identifier)
     h = harmonize(sub, ref, drop_ambiguous=not args.keep_ambiguous,
-                  status=sub_status)
+                  status=sub_status, liftover="auto" if automatic else False)
     if sub_status is not None:
         # Per-row harmonisation reasons (the row loop) only when a status
         # table was asked for; otherwise the harmonize log has the counts.
@@ -280,6 +287,9 @@ def build_parser():
                    help="keep strand-ambiguous (A/T, C/G) variants")
     p.add_argument("--reanchor-on-identifier", action="store_true",
                    help="take coordinates from the reference's rsIDs")
+    p.add_argument("--no-liftover", action="store_true",
+                   help="never lift the statistics to the reference's build "
+                        "(by default a detected or declared mismatch is lifted over)")
     p.add_argument("--sumstats-build", default=None)
     p.add_argument("--reference-build", default=None)
     g = p.add_argument_group(

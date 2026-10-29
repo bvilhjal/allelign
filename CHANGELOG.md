@@ -4,6 +4,28 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
+### Added
+
+- Automatic genome-build detection and liftover. `harmonize` (and so
+  `harmonize_weights` and `allelign align`) checks an alignment covering
+  under half of the reference for the build-mismatch signature on a row
+  sample; `detect_build` then names both builds by testing which UCSC
+  liftover makes the rows agree with the reference, and the rows are lifted
+  and matched again (`liftover="auto"`, default; `liftover=False` or
+  `--no-liftover` turns it off). The new `lift` module (`liftover`,
+  `detect_build`, `load_chain`, `fetch_chain`) parses the UCSC chain files,
+  downloaded once into the cache and checked by SHA-256, with NumPy.
+
+### Changed
+
+- `allelign align` lifts mismatched `--sumstats-build`/`--reference-build`
+  declarations over instead of refusing them (`status="lifted"`); the old
+  refusal needs `--no-liftover`.
+- The test suite runs with a per-test cache and no network access
+  (`tests/conftest.py`).
+
 ## [0.2.0] - 2026-10-29
 
 ### Added

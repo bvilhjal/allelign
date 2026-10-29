@@ -367,7 +367,7 @@ def test_cli_inspect_clean_align_export(tmp_path, capsys):
 
     assert main(["align", str(gwas), "--reference", str(bim), "-o",
                  str(tmp_path / "x.tsv"), "--sumstats-build", "hg38",
-                 "--reference-build", "hg19"]) == 2
+                 "--reference-build", "hg19", "--no-liftover"]) == 2
 
     w = _weights(tmp_path, sd_source="hwe")
     pgs = tmp_path / "w.pgs.txt"
@@ -392,7 +392,7 @@ def test_cli_explicit_reanchor_allows_declared_build_change(tmp_path, capsys):
     args = ["align", str(gwas), "--reference", str(bim), "-o", str(out),
             "--sumstats-build", "hg38", "--reference-build", "hg19",
             "--status-out", str(status)]
-    assert main(args) == 2
+    assert main(args + ["--no-liftover"]) == 2
     assert not out.exists()
     assert "declared GRCh38" in capsys.readouterr().err
     with pytest.warns(RuntimeWarning, match="identifier-keyed re-anchoring"):
@@ -461,3 +461,26 @@ def test_cli_log_write_failure_preserves_destination(tmp_path, monkeypatch, exis
     else:
         assert not path.exists()
     assert list(tmp_path.iterdir()) == ([path] if existing else [])
+
+
+def test_cli_lifts_a_declared_build_mismatch(tmp_path, monkeypatch):
+    from allelign import lift
+    chain_file = tmp_path / "down.chain"
+    chain_file.write_text("chain 1 chr1 100000 + 1000 2000 chr1 100000 + 0 1000 1\n1000\n")
+    chain = lift.read_chain(chain_file)
+    monkeypatch.setattr(lift, "load_chain", lambda source, target, **_: chain)
+    gwas = tmp_path / "gwas.tsv"
+    gwas.write_text("SNP CHR BP A1 A2 BETA SE N EAF\n"
+                    "rs1 1 1100 A G 0.1 0.01 1000 0.2\n"
+                    "rs2 1 1300 C T 0.2 0.01 1000 0.3\n"
+                    "rs9 1 5000 A G 0.3 0.01 1000 0.3\n")
+    bim = tmp_path / "ref.bim"
+    bim.write_text("1 rs1 0 100 A G\n1 rs2 0 300 C T\n1 rs9 0 4000 A G\n")
+    out = tmp_path / "aligned.tsv"
+    assert main(["align", str(gwas), "--reference", str(bim), "-o", str(out),
+                 "--sumstats-build", "hg38", "--reference-build", "hg19"]) == 0
+    ss = read_sumstats(out)
+    assert ss.id.tolist() == ["rs1", "rs2"] and ss.pos.tolist() == [100, 300]
+    log = json.loads((tmp_path / "aligned.tsv.log.json").read_text())
+    assert log["build"]["status"] == "lifted" and log["build"]["output"] == "GRCh37"
+    assert log["liftover"]["n_lifted"] == 2 and log["liftover"]["n_unmapped"] == 1

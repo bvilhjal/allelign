@@ -7,7 +7,7 @@ number. NumPy-only; Numba and SciPy speed up the parser and the LD screen when
 installed.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from .alleles import (allele_orientation, is_ambiguous, normalize_chrom,
                       reverse_complement)
@@ -21,6 +21,7 @@ from .align import (Harmonized, HarmonizedWeights,
                     diagnose_match, harmonize, harmonize_weights,
                     reanchor_on_identifier, reference_coverage,
                     variant_indices)
+from .lift import detect_build, fetch_chain, liftover, load_chain
 from .ldcheck import (chromosome_blocks, dense_blocks, dentist_statistic,
                       ld_consistency_screen_selected,
                       ld_blocks_from_genotypes, ld_consistency_screen,
@@ -54,7 +55,7 @@ __all__ = [
     "diagnose_match", "count_positional_only_matches", "variant_indices",
     "normalize_chrom", "reverse_complement", "is_ambiguous",
     "allele_orientation", "normalize_build", "check_build",
-    "BuildMismatchError",
+    "BuildMismatchError", "detect_build", "liftover", "load_chain", "fetch_chain",
     # quality control
     "qc_sumstats", "sd_consistency_mask", "af_concordance_mask",
     "gwas_af_on_counted_allele", "should_impute_n", "impute_n_eff",

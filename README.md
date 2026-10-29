@@ -55,7 +55,8 @@ Every filter can stamp a per-row status array (`al.new_status(len(ss))`, passed 
 ```bash
 allelign inspect gwas.tsv.gz
 allelign clean gwas.tsv.gz -o clean.tsv.gz --status-out status.tsv
-allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --sumstats-build GRCh38 --reference-build GRCh37 --reanchor-on-identifier
+allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --sumstats-build GRCh38 --reference-build GRCh37   # lifted over
+allelign align GCST002216 --reference ref.bim -o aligned.tsv.gz   # GRCh38 against GRCh37: detected and lifted over
 allelign align gwas.tsv.gz --reference ref.bim -o aligned.tsv.gz --ld-screen --ld-keep eur_samples.txt --status-out status.tsv
 allelign pgs-export prs.weights.tsv -o PGS_my.txt --genome-build GRCh37
 allelign download GCST91000728 -o gwas.h.tsv.gz          # GWAS Catalog; other providers below
@@ -84,6 +85,7 @@ Each command writes `<out>.log.json` with the parse, QC, harmonisation and cover
   - ambiguous pairs dropped;
   - multi-allelic sites;
   - coverage diagnosis that names a build mismatch;
+  - automatic genome-build detection and UCSC chain liftover between GRCh37 and GRCh38 when an alignment shows a mismatch;
   - identifier re-anchoring;
   - a declared-build check.
 - **QC.**
@@ -117,5 +119,5 @@ Parts of the code and documentation were generated with AI assistance and review
 
 ## Status
 
-Version 0.2.0. MIT licence. If you use allelign, please cite it — see
+Version 0.3.0. MIT licence. If you use allelign, please cite it — see
 [CITATION.cff](CITATION.cff).

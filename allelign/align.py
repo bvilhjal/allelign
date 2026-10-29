@@ -582,7 +582,8 @@ def _harmonize_vector(sumstats, variants, entry, columns, drop_ambiguous):
                       src_index=src, log=log)
 
 
-def harmonize(sumstats, variants, *, drop_ambiguous=True, status=None):
+def harmonize(sumstats, variants, *, drop_ambiguous=True, status=None,
+              liftover="auto"):
     """Align ``sumstats`` to ``variants``; see the module docstring for the rules.
 
     ``sumstats`` is any object with ``id, chrom, pos, ea, oa, beta, se,
@@ -595,7 +596,126 @@ def harmonize(sumstats, variants, *, drop_ambiguous=True, status=None):
     (:mod:`allelign.status`): every dropped row is stamped with its reason
     and matched rows stay 0. Such calls take the row loop -- the same rule
     set and the same result, at O(rows) Python.
+
+    With ``liftover="auto"`` (the default), an alignment covering less than
+    half of the reference that shows the genome-build mismatch signature is
+    checked with :func:`~allelign.lift.detect_build`. When the rows fit
+    the other build, they are lifted over (UCSC chain file, downloaded once)
+    and matched again; the result is kept if it matches at least twice as
+    many variants, with a warning and ``log["liftover"]`` as the record.
+    Well-matched alignments are never touched. ``liftover=False`` turns the
+    check off.
     """
+    if liftover not in ("auto", False, None):
+        raise ValueError(f"liftover must be 'auto' or False, not {liftover!r}")
+    result = _harmonize(sumstats, variants, drop_ambiguous, status)
+    if liftover == "auto":
+        result = _auto_liftover(sumstats, variants, result, drop_ambiguous, status)
+    return result
+
+
+#: An unmatched rsID sample of at least this size, or this many rows with
+#: coordinates in an rsID-less file, is needed before a build check runs; small
+#: files never trigger a chain download.
+AUTO_LIFTOVER_MIN_ROWS = 1000
+#: An rsID-less file matching fewer than this fraction of its positioned rows
+#: is checked for a build mismatch.
+AUTO_LIFTOVER_MAX_POSITIONAL_MATCH = 0.02
+
+
+def _build_mismatch_signature(sumstats, variants, result, *, sample=20_000):
+    """Cheap test for the SMARTpred build-mismatch signature on a row sample.
+
+    True when many unmatched rows carry an identifier the reference holds at
+    other coordinates (the :func:`reference_coverage` rule), or, for a file
+    whose identifiers the reference does not hold, when rows with coordinates
+    match almost nothing.
+    """
+    n_rows = len(sumstats.id)
+    matched = np.zeros(n_rows, dtype=bool)
+    if result.src_index is not None and len(result):
+        matched[np.asarray(result.src_index, dtype=np.int64)] = True
+    unmatched = np.flatnonzero(~matched)
+    if unmatched.size == 0:
+        return False
+    if unmatched.size > sample:
+        unmatched = unmatched[np.linspace(0, unmatched.size - 1, sample).astype(np.int64)]
+    index = _ReferenceLoci(variants)
+    ss_id, ss_chrom, ss_pos = sumstats.id, sumstats.chrom, sumstats.pos
+    held = elsewhere = 0
+    memo = {}
+    for k in unmatched:
+        key = ss_id[k]
+        loci = index.loci(key) if key else None
+        if loci is None:
+            continue
+        held += 1
+        raw = ss_chrom[k]
+        norm = memo.get(raw)
+        if norm is None:
+            norm = memo[raw] = _norm_chrom(raw)
+        try:
+            here = int(ss_pos[k])
+        except (TypeError, ValueError, OverflowError):
+            here = 0
+        if here > 0 and (norm, here) not in loci:
+            elsewhere += 1
+    if held:
+        return (elsewhere >= AUTO_LIFTOVER_MIN_ROWS
+                and elsewhere / unmatched.size >= BUILD_MISMATCH_FRACTION)
+    pos = np.asarray(ss_pos)
+    try:
+        positioned = int(np.count_nonzero(pos.astype(np.int64) > 0))
+    except (TypeError, ValueError):
+        return False
+    return (positioned >= 10 * AUTO_LIFTOVER_MIN_ROWS
+            and len(result) < AUTO_LIFTOVER_MAX_POSITIONAL_MATCH * positioned)
+
+
+def _auto_liftover(sumstats, variants, result, drop_ambiguous, status):
+    """Lift a poorly matched, build-mismatched alignment over and match again."""
+    from dataclasses import is_dataclass
+
+    from . import lift as _lo
+
+    n_reference = len(variants.id)
+    if (len(sumstats.id) < AUTO_LIFTOVER_MIN_ROWS or not n_reference
+            or len(result) >= REFERENCE_COVERAGE_WARN * n_reference):
+        return result
+    if not is_dataclass(sumstats) or not _build_mismatch_signature(sumstats, variants, result):
+        return result
+    try:
+        found = _lo.detect_build(sumstats, variants)
+    except (ValueError, OSError) as exc:
+        result.log["liftover"] = {"applied": False, "reason": f"build check failed: {exc}"}
+        warnings.warn(f"possible genome-build mismatch, but the build check failed ({exc}); "
+                      "the alignment is left as it is", RuntimeWarning, stacklevel=3)
+        return result
+    if found["relation"] != "differ":
+        result.log["liftover"] = {"applied": False, "detected": found}
+        return result
+    lifted, lift_log = _lo.liftover(sumstats, found["sumstats_build"], found["reference_build"])
+    fresh = None if status is None else _st.new_status(len(status))
+    again = _harmonize(lifted, variants, drop_ambiguous, fresh)
+    record = {**lift_log, "detected": found, "n_matched_before": len(result),
+              "n_matched_after": len(again)}
+    if len(again) < 2 * max(len(result), 1):
+        result.log["liftover"] = {"applied": False, **record}
+        return result
+    if status is not None:
+        status[:] = fresh
+    again.log["liftover"] = {"applied": True, **record}
+    warnings.warn(
+        f"the summary statistics are on {found['sumstats_build']} and the reference on "
+        f"{found['reference_build']}: lifted {lift_log['n_lifted']:,} of {lift_log['n_rows']:,} "
+        f"rows over (UCSC chain), which matched {len(again):,} variants instead of "
+        f"{len(result):,}. Set liftover=False to keep the original coordinates.",
+        RuntimeWarning, stacklevel=3)
+    return again
+
+
+def _harmonize(sumstats, variants, drop_ambiguous, status):
+    """:func:`harmonize` without the build check."""
     entry = _variant_indices(variants)
     if status is not None:
         status = _st.check_status(status, len(sumstats))
