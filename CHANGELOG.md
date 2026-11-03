@@ -4,6 +4,11 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Changed
+
+- Consolidated the Hardy--Weinberg variance and SD-scaling expressions used
+  by the QC diagnostics. Numerical results and ldpred3 parity are unchanged.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added

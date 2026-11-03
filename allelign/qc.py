@@ -35,6 +35,11 @@ __all__ = ["qc_sumstats", "sd_consistency_mask", "af_concordance_mask",
            "APOE_GRCH37"]
 
 
+def _hwe_variance(af):
+    """Diploid Hardy--Weinberg dosage variance ``2 f (1 - f)``."""
+    return 2.0 * af * (1.0 - af)
+
+
 def qc_sumstats(ss, *, min_n_ratio=0.7, min_n_anchor="median",
                 min_maf=0.01, min_info=0.7, max_chisq=None,
                 drop_duplicates=True, status=None):
@@ -209,7 +214,7 @@ def sd_consistency_mask(beta, se, n_eff, af_ref, *, info=None, chrom=None,
     beta = np.asarray(beta, float); se = np.asarray(se, float)
     n_eff = np.asarray(n_eff, float); af_ref = np.asarray(af_ref, float)
 
-    sd_ref = np.sqrt(2.0 * af_ref * (1.0 - af_ref))
+    sd_ref = np.sqrt(_hwe_variance(af_ref))
     with np.errstate(divide="ignore", invalid="ignore"):
         sd_ss = 1.0 / np.sqrt(n_eff * se ** 2 + beta ** 2)
     if info is not None:
@@ -220,24 +225,24 @@ def sd_consistency_mask(beta, se, n_eff, af_ref, *, info=None, chrom=None,
     finite = np.isfinite(sd_ss) & np.isfinite(sd_ref) & (sd_ref > 0)
     n_nonautosomal = 0
     nonauto_scale = None
+
+    def _scale(mask=None, min_count=1):
+        """Median multiplier anchoring ``sd_ss`` to ``sd_ref`` on ``mask``."""
+        sel = finite if mask is None else finite & mask
+        if sel.sum() < min_count:
+            return None
+        return float(np.median(sd_ref[sel] / sd_ss[sel]))
+
     if chrom is None:
-        if finite.any():
-            scale = np.median(sd_ref[finite] / sd_ss[finite])
+        scale = _scale()
+        if scale is not None:
             sd_ss = sd_ss * scale
     else:
         auto = _autosome_mask(chrom, beta.size)
         n_nonautosomal = int((~auto).sum())
-
-        def _group_scale(mask):
-            sel = finite & mask
-            if sel.sum() < 50:
-                return None
-            return float(np.median(sd_ref[sel] / sd_ss[sel]))
-
-        global_scale = (float(np.median(sd_ref[finite] / sd_ss[finite]))
-                        if finite.any() else None)
-        auto_scale = _group_scale(auto)
-        nonauto_scale = _group_scale(~auto)
+        global_scale = _scale()
+        auto_scale = _scale(auto, min_count=50)
+        nonauto_scale = _scale(~auto, min_count=50)
         if auto_scale is None:
             auto_scale = nonauto_scale if nonauto_scale is not None else global_scale
         if nonauto_scale is None:
@@ -266,9 +271,9 @@ def sd_consistency_mask(beta, se, n_eff, af_ref, *, info=None, chrom=None,
     _st.mark(status, _st.SD_UNTESTABLE, ~testable)
     _st.mark(status, _st.SD_LOW, dropped & too_low)
     _st.mark(status, _st.SD_HIGH, dropped & too_high & ~too_low)
-    if testable.any() and np.sum(sd_ref[testable] ** 2) > 0:
-        slope = float(np.sum(sd_ss[testable] * sd_ref[testable])
-                      / np.sum(sd_ref[testable] ** 2))
+    denominator = np.sum(sd_ref[testable] ** 2)
+    if denominator > 0:
+        slope = float(np.sum(sd_ss[testable] * sd_ref[testable]) / denominator)
     else:
         slope = float("nan")
 
@@ -421,7 +426,7 @@ def impute_n_eff(se, af_ref, n_total, *, anchor_quantile=0.99,
     anchor_quantile = finite_control("anchor_quantile", anchor_quantile,
                                      lower=0.0, upper=1.0)
     anchor_bins = integer_at_least("anchor_bins", anchor_bins, 1)
-    sd_ref2 = 2.0 * af_ref * (1.0 - af_ref)
+    sd_ref2 = _hwe_variance(af_ref)
     with np.errstate(divide="ignore", invalid="ignore"):
         n_raw = 1.0 / (se ** 2 * sd_ref2)
     finite = np.isfinite(n_raw) & (n_raw > 0)
@@ -524,7 +529,7 @@ def implied_sample_size(beta, se, af, *, binary=False, reported_n=None,
     if not binary:
         return {"median": float("nan"), "ratio": float("nan"),
                 "consistent": False}
-    var = 2.0 * af * (1.0 - af)
+    var = _hwe_variance(af)
     if strict:
         # Preserve the rounding of bipred's historical sd_ref ** 2 formula.
         var = np.sqrt(var) ** 2
