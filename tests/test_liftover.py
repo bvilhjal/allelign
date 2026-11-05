@@ -177,6 +177,71 @@ def test_harmonize_lifts_an_identifier_less_file(tmp_path, monkeypatch):
     assert len(h) == 12_000
 
 
+@pytest.fixture
+def partial_liftover(tmp_path, monkeypatch):
+    _install_shift_chains(monkeypatch, tmp_path)
+    monkeypatch.setattr(lo, "detect_build", lambda *args, **kwargs: {
+        "relation": "differ", "sumstats_build": "GRCh38",
+        "reference_build": "GRCh37"})
+
+    def align(rejection="allele", n_reference=2400):
+        ref = _reference(n_reference)
+        ss = _sumstats(ref.id[:1200], ref.chrom[:1200].copy(), ref.pos[:1200] + 50,
+                       ref.a1[:1200], ref.a2[:1200].copy())
+        if rejection == "allele":
+            ss.oa[800:] = "C"
+        elif rejection == "mixed":
+            ss.pos[800:] += 100
+        else:
+            ss.chrom[800:] = "5"
+        original = (ss.id.copy(), ss.chrom.copy(), ss.pos.copy())
+        with pytest.warns(RuntimeWarning, match="lifted"):
+            h = allelign.harmonize(ss, ref)
+        assert len(h) == 800
+        for before, after in zip(original, (ss.id, ss.chrom, ss.pos)):
+            np.testing.assert_array_equal(before, after)
+        return ss, ref, h
+
+    return align
+
+
+@pytest.mark.parametrize("rejection", ["allele", "mixed", "unmapped"])
+def test_coverage_diagnoses_the_lifted_rows(partial_liftover, rejection):
+    ss, ref, h = partial_liftover(rejection)
+    coverage = allelign.reference_coverage(ss, ref, h)
+    lifted, _ = lo.liftover(ss, "GRCh38", "GRCh37")
+    lifted_h = allelign.harmonize(lifted, ref, liftover=False)
+    expected = allelign.reference_coverage(lifted, ref, lifted_h)
+    assert coverage == expected
+    assert coverage["n_unmatched_rows"] == 400
+    assert coverage["build_mismatch_suspected"] is (rejection == "mixed")
+    assert coverage["n_unmatched_id_elsewhere"] == (400 if rejection == "mixed" else 0)
+    assert coverage["n_unmatched_id_missing"] == (400 if rejection == "unmapped" else 0)
+    assert h.log["liftover"]["n_unmapped"] == (400 if rejection == "unmapped" else 0)
+    if rejection == "mixed":
+        assert "801100" in coverage["examples"][0]
+    coverage["examples"].append("caller edit")
+    assert "caller edit" not in h.log["liftover"]["unmatched"]["examples"]
+
+
+def test_lifted_coverage_handles_full_reference_and_validity_counts(partial_liftover):
+    from allelign.align import _reference_coverage
+    ss, ref, h = partial_liftover(n_reference=1200)
+    assert allelign.reference_coverage(ss, ref, h)["reason"] == "adequate_coverage"
+    coverage = _reference_coverage(ss, ref, h, n_reference=2400,
+                                   n_matched=700, n_invalid=100)
+    assert coverage["n_matched"] == 700
+    assert coverage["n_unmatched_rows"] == 400
+    assert coverage["build_mismatch_suspected"] is False
+
+
+@pytest.mark.parametrize("cached", [None, {}, {"n_unmatched_rows": -1}])
+def test_lifted_coverage_without_a_valid_diagnosis_stays_conservative(partial_liftover, cached):
+    ss, ref, h = partial_liftover()
+    h.log["liftover"]["unmatched"] = cached
+    assert allelign.reference_coverage(ss, ref, h)["build_mismatch_suspected"] is True
+
+
 def test_harmonize_leaves_well_matched_and_small_inputs_alone(tmp_path, monkeypatch):
     def refuse(*args, **kwargs):
         raise AssertionError("the build check must not run")

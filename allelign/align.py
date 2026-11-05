@@ -704,7 +704,11 @@ def _auto_liftover(sumstats, variants, result, drop_ambiguous, status):
         return result
     if status is not None:
         status[:] = fresh
-    again.log["liftover"] = {"applied": True, **record}
+    # Diagnose while the lifted rows still exist; consumers retain the original input.
+    again.log["liftover"] = {
+        "applied": True, **record,
+        "unmatched": _diagnose_unmatched(lifted, variants, again),
+    }
     warnings.warn(
         f"the summary statistics are on {found['sumstats_build']} and the reference on "
         f"{found['reference_build']}: lifted {lift_log['n_lifted']:,} of {lift_log['n_rows']:,} "
@@ -1008,7 +1012,24 @@ def _reference_coverage(sumstats, variants, harmonized, *, n_reference=None,
         # why. Naming the build here would be a guess.
         out["reason"] = "no_rows_offered"
         return out
-    diagnosis = _diagnose_unmatched(sumstats, variants, harmonized)
+    lift = (getattr(harmonized, "log", None) or {}).get("liftover") or {}
+    cached = lift.get("unmatched") if isinstance(lift, dict) else None
+    counts = ("n_unmatched_rows", "n_unmatched_id_elsewhere",
+              "n_unmatched_id_absent", "n_unmatched_id_missing")
+    diagnosis = None
+    if (isinstance(lift, dict) and lift.get("applied") is True and lift.get("n_rows") == n_rows
+            and lift.get("n_matched_after") == len(harmonized)
+            and isinstance(cached, dict)
+            and all(type(cached.get(key)) is int and cached[key] >= 0 for key in counts)
+            and cached["n_unmatched_rows"] == n_rows - len(harmonized)
+            and sum(cached[key] for key in counts[1:]) <= cached["n_unmatched_rows"]
+            and isinstance(cached.get("examples"), list)
+            and len(cached["examples"]) <= 3
+            and all(isinstance(value, str) for value in cached["examples"])):
+        diagnosis = {key: cached[key] for key in counts}
+        diagnosis["examples"] = list(cached["examples"])
+    if diagnosis is None:
+        diagnosis = _diagnose_unmatched(sumstats, variants, harmonized)
     out.update(diagnosis, diagnosed=True)
     n_unmatched = diagnosis["n_unmatched_rows"]
     elsewhere = diagnosis["n_unmatched_id_elsewhere"]

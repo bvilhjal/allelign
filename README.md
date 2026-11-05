@@ -119,5 +119,5 @@ Parts of the code and documentation were generated with AI assistance and review
 
 ## Status
 
-Version 0.3.0. MIT licence. If you use allelign, please cite it — see
+Version 0.3.1. MIT licence. If you use allelign, please cite it — see
 [CITATION.cff](CITATION.cff).

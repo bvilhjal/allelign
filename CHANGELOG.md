@@ -4,6 +4,15 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-05
+
+### Fixed
+
+- Diagnose unmatched rows on their lifted coordinates after automatic
+  liftover. Partial reference coverage with allele-rejected rows no longer
+  masquerades as an unresolved build mismatch; remaining coordinate
+  mismatches and unmapped-row counts are preserved.
+
 ### Changed
 
 - Consolidated the Hardy--Weinberg variance and SD-scaling expressions used
