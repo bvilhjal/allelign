@@ -158,6 +158,7 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
   QC; earlier readers could treat covariate coefficients as variant effects.
 - `write_pgs_scoring_file` writes `#sd_source=unspecified` instead of `empirical` when the source is unknown.
 - `in_long_range_ld` normalises chromosome labels. APOE is off by default.
+- ldpred3 0.9.38 stopped re-exporting eight names it no longer used (`sumstats._SUMSTATS_FIELDS`, `weights.SD_SOURCES`, and the `harmonize` helpers `_vector_columns`, `_harmonize_vector`, `_harmonize_rows`, `_ambiguous_pair`, `_allele_orientation`, `_complement`), so the parity tests no longer check them. Import them from allelign.
 
 ## 6. Downloading public summary statistics
 
