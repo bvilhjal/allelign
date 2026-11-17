@@ -4,6 +4,11 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Added
+
+- `tests/test_consumer_surface.py` pins the private names ldpred3 imports from
+  allelign, so renaming one fails here rather than in a fresh ldpred3 install.
+
 ## [0.3.1] - 2026-11-05
 
 ### Fixed
