@@ -4,6 +4,6 @@ type: software
 title: allelign
 authors:
   - name: bvilhjal
-version: "0.3.1"
+version: "0.3.2"
 repository-code: "https://github.com/bvilhjal/allelign"
 license: MIT

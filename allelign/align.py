@@ -42,6 +42,7 @@ from .alleles import (allele_orientation as _allele_orientation,
                       is_ambiguous as _ambiguous_pair,
                       normalize_chrom as _norm_chrom,
                       reverse_complement as _complement)
+from .weights import ScoringFile, _MISSING_ALLELE
 
 __all__ = ["Harmonized", "harmonize", "diagnose_match", "reference_coverage",
            "coverage_message", "reanchor_on_identifier", "HarmonizedWeights",
@@ -154,11 +155,8 @@ def _query_locus(chrom, query_memo):
     return hit
 
 
-def _coordinate_candidates(candidates, variants, chrom, pos, memo,
-                           query_memo=None):
-    """Disambiguate an identifier, and reject a unique ID at the wrong locus."""
-    if query_memo is None:
-        query_memo = {}
+def _candidate_loci(candidates, variants, memo):
+    """Reference loci in candidate order, with canonical chromosome labels."""
     loci = []
     for gi in candidates:
         raw = variants.chrom[gi]
@@ -166,6 +164,15 @@ def _coordinate_candidates(candidates, variants, chrom, pos, memo,
         if candidate_norm is None:
             candidate_norm = memo[raw] = _norm_chrom(raw)
         loci.append((candidate_norm, int(variants.pos[gi])))
+    return loci
+
+
+def _coordinate_candidates(candidates, variants, chrom, pos, memo,
+                           query_memo=None):
+    """Disambiguate an identifier, and reject a unique ID at the wrong locus."""
+    if query_memo is None:
+        query_memo = {}
+    loci = _candidate_loci(candidates, variants, memo)
 
     unique_loci = len(set(loci)) == 1
     try:
@@ -432,11 +439,15 @@ def _harmonize_vector(sumstats, variants, entry, columns, drop_ambiguous):
         s_id, s_chrom, raw_pos = (columns["id"], columns["chrom"],
                                   _rows(columns["raw_pos"]))
         for k in rows.tolist():
-            hits = _coordinate_candidates(by_id[s_id[k]], variants,
+            candidates = by_id[s_id[k]]
+            hits = _coordinate_candidates(candidates, variants,
                                           s_chrom[k], raw_pos[k], memo,
                                           query_memo)
             if not hits:
-                n_ambiguous_id += 1
+                if len(set(_candidate_loci(candidates, variants, memo))) > 1:
+                    n_ambiguous_id += 1
+                else:
+                    n_unmatched += 1
             elif len(hits) == 1:
                 cand[k] = hits[0]
             else:
@@ -614,9 +625,8 @@ def harmonize(sumstats, variants, *, drop_ambiguous=True, status=None,
     return result
 
 
-#: An unmatched rsID sample of at least this size, or this many rows with
-#: coordinates in an rsID-less file, is needed before a build check runs; small
-#: files never trigger a chain download.
+#: Require evidence of at least this many coordinate disagreements across
+#: the input. For a sampled input, estimate the count from its sample.
 AUTO_LIFTOVER_MIN_ROWS = 1000
 #: An rsID-less file matching fewer than this fraction of its positioned rows
 #: is checked for a build mismatch.
@@ -636,10 +646,11 @@ def _build_mismatch_signature(sumstats, variants, result, *, sample=20_000):
     if result.src_index is not None and len(result):
         matched[np.asarray(result.src_index, dtype=np.int64)] = True
     unmatched = np.flatnonzero(~matched)
-    if unmatched.size == 0:
+    n_unmatched = unmatched.size
+    if n_unmatched == 0:
         return False
-    if unmatched.size > sample:
-        unmatched = unmatched[np.linspace(0, unmatched.size - 1, sample).astype(np.int64)]
+    if n_unmatched > sample:
+        unmatched = unmatched[np.linspace(0, n_unmatched - 1, sample).astype(np.int64)]
     index = _ReferenceLoci(variants)
     ss_id, ss_chrom, ss_pos = sumstats.id, sumstats.chrom, sumstats.pos
     held = elsewhere = 0
@@ -658,11 +669,14 @@ def _build_mismatch_signature(sumstats, variants, result, *, sample=20_000):
             here = int(ss_pos[k])
         except (TypeError, ValueError, OverflowError):
             here = 0
-        if here > 0 and (norm, here) not in loci:
+        if here > 0 and norm and (norm, here) not in loci and any(
+                chrom and pos > 0 for chrom, pos in loci):
             elsewhere += 1
     if held:
-        return (elsewhere >= AUTO_LIFTOVER_MIN_ROWS
-                and elsewhere / unmatched.size >= BUILD_MISMATCH_FRACTION)
+        # Require a minimum number of observations even for very large files.
+        return (elsewhere >= 20
+                and elsewhere * n_unmatched >= AUTO_LIFTOVER_MIN_ROWS * unmatched.size
+                and elsewhere / held >= BUILD_MISMATCH_FRACTION)
     pos = np.asarray(ss_pos)
     try:
         positioned = int(np.count_nonzero(pos.astype(np.int64) > 0))
@@ -721,6 +735,9 @@ def _auto_liftover(sumstats, variants, result, drop_ambiguous, status):
 def _harmonize(sumstats, variants, drop_ambiguous, status):
     """:func:`harmonize` without the build check."""
     entry = _variant_indices(variants)
+    incomplete = getattr(sumstats, "incomplete_other_allele", None)
+    if incomplete is not None:
+        sumstats = _complete_score_pairs(sumstats, variants, entry, incomplete)
     if status is not None:
         status = _st.check_status(status, len(sumstats))
         return _harmonize_rows(sumstats, variants, entry, drop_ambiguous,
@@ -766,12 +783,13 @@ def _harmonize_rows(sumstats, variants, entry, drop_ambiguous, status=None):
         sid = s_id[k]
         candidates = by_id_get(sid) if sid else None
         if candidates:
-            n_id = len(candidates)
+            id_rows = candidates
             candidates = _coordinate_candidates(
                 candidates, variants, s_chrom[k], s_pos[k], _memo,
                 query_memo)
             if not candidates:
-                if n_id > 1:
+                if (len(id_rows) > 1 and
+                        len(set(_candidate_loci(id_rows, variants, _memo))) > 1):
                     n_ambiguous_id += 1
                     _drop(k, _st.AMBIGUOUS_ID)
                 else:
@@ -892,7 +910,7 @@ REFERENCE_COVERAGE_WARN = 0.5
 #: Below this the analysis is no longer genome-wide on that reference.
 SEVERE_REFERENCE_COVERAGE = 0.1
 #: Call it a build/coordinate mismatch when at least this fraction of the
-#: unmatched rows carry an identifier the reference holds elsewhere.
+#: unmatched rows with a shared identifier disagree on coordinates.
 BUILD_MISMATCH_FRACTION = 0.2
 
 
@@ -959,7 +977,8 @@ def _diagnose_unmatched(sumstats, variants, harmonized):
             here = int(ss_pos[k])
         except (TypeError, ValueError, OverflowError):
             here = 0
-        if (norm, here) in loci:
+        if (not norm or here <= 0 or (norm, here) in loci
+                or not any(chrom and pos > 0 for chrom, pos in loci)):
             continue
         report["n_unmatched_id_elsewhere"] += 1
         if len(report["examples"]) < 3:
@@ -1034,8 +1053,9 @@ def _reference_coverage(sumstats, variants, harmonized, *, n_reference=None,
     n_unmatched = diagnosis["n_unmatched_rows"]
     elsewhere = diagnosis["n_unmatched_id_elsewhere"]
     absent = diagnosis["n_unmatched_id_absent"]
+    held = n_unmatched - absent - diagnosis["n_unmatched_id_missing"]
     build_mismatch = bool(
-        n_unmatched and elsewhere / n_unmatched >= BUILD_MISMATCH_FRACTION)
+        held and elsewhere / held >= BUILD_MISMATCH_FRACTION)
     out["build_mismatch_suspected"] = build_mismatch
     out["severe"] = out["frac_of_reference"] < SEVERE_REFERENCE_COVERAGE
     out["reason"] = (
@@ -1090,10 +1110,13 @@ def coverage_message(coverage, *, label="sumstats", n_invalid=0,
             "LDSC keeps the full reference M and the LD blocks stay sparse, "
             "so h2, polygenicity, and screen coverage are all affected.")
     if reason == "build_mismatch" or coverage.get("build_mismatch_suspected"):
+        held = (coverage["n_unmatched_rows"]
+                - coverage.get("n_unmatched_id_absent", 0)
+                - coverage.get("n_unmatched_id_missing", 0))
         lines.append(
             f"{coverage['n_unmatched_id_elsewhere']:,} of the "
-            f"{coverage['n_unmatched_rows']:,} unmatched rows carry an identifier "
-            "the reference holds at coordinates that disagree. That is the "
+            f"{held:,} unmatched rows with shared identifiers disagree on "
+            "coordinates. That is the "
             "signature of a genome-build mismatch (GRCh38 summary statistics "
             "against a GRCh37 reference, or the reverse) or of CHR/BP read "
             "from the wrong columns. Check the column mapping; if the builds "
@@ -1337,9 +1360,63 @@ class _EffectRows:
     beta: np.ndarray
     se: np.ndarray
     n_eff: np.ndarray
+    incomplete_other_allele: np.ndarray = None
 
     def __len__(self):
         return len(self.beta)
+
+
+def _infer_other_allele(ea, alternatives, candidates, variants):
+    """Complete a score's allele pair only for a unique variant and sign."""
+    if ea in _MISSING_ALLELE:
+        return None
+    cea = _complement(ea)
+    inferred = None
+    for gi in candidates:
+        a1, a2 = str(variants.a1[gi]).upper(), str(variants.a2[gi]).upper()
+        if a1 == a2 or a1 in _MISSING_ALLELE or a2 in _MISSING_ALLELE:
+            continue
+        for counted, other in ((a1, a2), (a2, a1)):
+            if ea == counted and (not alternatives or other in alternatives):
+                allele = other
+            elif cea == counted:
+                allele = _complement(other)
+                if not allele or (alternatives and allele not in alternatives):
+                    continue
+            else:
+                continue
+            if inferred is not None:
+                return None
+            inferred = allele
+    return inferred
+
+
+def _complete_score_pairs(rows, variants, entry, incomplete):
+    """Supply uniquely inferred other alleles before the usual matching pass."""
+    oa = rows.oa.copy()
+    by_id, by_pos, memo = entry[1], entry[2], entry[4]
+    query_memo = {}
+    for k in np.flatnonzero(incomplete).tolist():
+        chrom, pos = rows.chrom[k], int(rows.pos[k])
+        candidates = by_id.get(rows.id[k])
+        if candidates:
+            if len(candidates) > 1:
+                candidates = _coordinate_candidates(candidates, variants, chrom, pos,
+                                                    memo, query_memo)
+        elif pos > 0:
+            if by_pos is None:
+                entry[2] = by_pos = _build_pos_index(variants, memo)
+            candidates = by_pos.get((_norm_chrom(chrom), pos))
+        if not candidates:
+            continue
+        raw = str(oa[k]).strip().upper()
+        alternatives = () if raw in _MISSING_ALLELE else tuple(
+            allele.strip() for allele in raw.split("/"))
+        inferred = _infer_other_allele(str(rows.ea[k]).strip().upper(),
+                                       alternatives, candidates, variants)
+        if inferred is not None:
+            oa[k] = inferred
+    return replace(rows, oa=oa)
 
 
 def harmonize_weights(weights, variants, *, drop_ambiguous=True, status=None):
@@ -1352,6 +1429,8 @@ def harmonize_weights(weights, variants, *, drop_ambiguous=True, status=None):
     :func:`harmonize` apply. The log adds ``weight_mass_matched``, the share
     of the total squared weight that matched (over the whole file when the
     score was read with a ``keep=`` prefilter).
+    For a PGS Catalog score with a missing or slash-separated other allele,
+    a match requires a unique compatible reference variant and effect sign.
     """
     ea = getattr(weights, "a1", None)
     oa = getattr(weights, "a2", None)
@@ -1359,12 +1438,20 @@ def harmonize_weights(weights, variants, *, drop_ambiguous=True, status=None):
         ea, oa = weights.ea, weights.oa
     w = np.asarray(weights.weight, dtype=float)
     ones = np.ones(w.size)
+    oa = np.asarray(oa, dtype=object)
+    incomplete = None
+    if isinstance(weights, ScoringFile):
+        mask = np.fromiter(
+            (a in _MISSING_ALLELE or "/" in a for a in map(str, oa)),
+            count=w.size, dtype=bool)
+        if mask.any():
+            incomplete = mask
     rows = _EffectRows(id=np.asarray(weights.id, dtype=object),
                        chrom=np.asarray(weights.chrom, dtype=object),
                        pos=np.asarray(weights.pos, dtype=np.int64),
                        ea=np.asarray(ea, dtype=object),
-                       oa=np.asarray(oa, dtype=object),
-                       beta=w, se=ones, n_eff=ones)
+                       oa=oa, beta=w, se=ones, n_eff=ones,
+                       incomplete_other_allele=incomplete)
     h = harmonize(rows, variants, drop_ambiguous=drop_ambiguous,
                   status=status)
     af = getattr(weights, "af_ref", None)
@@ -1383,6 +1470,8 @@ def harmonize_weights(weights, variants, *, drop_ambiguous=True, status=None):
     total = parse_log.get("weight_square_sum_all")
     total = float(w @ w) if total is None else float(total)
     log = dict(h.log)
+    if incomplete is not None:
+        log["n_matched_incomplete_alleles"] = int(incomplete[h.src_index].sum())
     if removed:
         log["n_sumstats"] += removed
         log["n_unmatched"] += removed

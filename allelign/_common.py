@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -70,6 +71,23 @@ def open_text(path):
 
 
 @contextmanager
+def atomic_output(path):
+    """Stage a file privately, then publish it with the destination's mode."""
+    path = Path(path)
+    with tempfile.TemporaryDirectory(prefix=f".{path.name}.", dir=path.parent) as directory:
+        temporary = Path(directory) / path.name
+        yield temporary
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            pass  # The staged file was opened with the process's umask.
+        else:
+            if stat.S_ISREG(mode):
+                temporary.chmod(mode & 0o777)
+        os.replace(temporary, path)
+
+
+@contextmanager
 def atomic_text(path):
     """Write text so that only a complete file is ever published at ``path``.
 
@@ -77,19 +95,12 @@ def atomic_text(path):
     destination filesystem, so the final ``os.replace`` is atomic.
     """
     path = Path(path)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.",
-                                     dir=path.parent or ".")
-    try:
+    with atomic_output(path) as temporary:
         if path.name.endswith(".gz"):
-            os.close(fd)
             with gzip.open(temporary, "wt", encoding="utf-8", compresslevel=1) as fh:
                 yield fh
         else:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            with temporary.open("w", encoding="utf-8") as fh:
                 yield fh
                 fh.flush()
                 os.fsync(fh.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)

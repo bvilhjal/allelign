@@ -25,6 +25,8 @@ reviewed by the maintainer.
 | PLINK2 | `A1` is tested: the other allele is `OMITTED`, or row by row `ALT` where `A1 == REF`, else `REF` |
 | REGENIE | `GENPOS` is the position when there is no `BP`; `LOG10P` recovers SE |
 | BOLT | `BP` wins over `GENPOS` (genetic position) |
+| GCTA fastGWA | `AF1` is the frequency of `A1` |
+| COVID-HGI | `rsid` identifies the variant and `CHR`/`POS` give its location |
 | GWAS Catalog harmonised | with `hm_beta` or `hm_odds_ratio`, the `hm_` columns are used as one set, and the submitted frequency is dropped if there is no `hm_effect_allele_frequency` (it may count the other allele); without a harmonised effect, the submitted columns are used |
 | PGC daner | `FRQ_U_<n>` (control frequency of A1) is the EAF when no EAF column exists |
 | Neale UKB | `variant` = `chr:pos:ref:alt`, effect on ALT |
@@ -52,8 +54,10 @@ Per-variant N comes from, in order:
 `parse_log["n_eff_source"]` records which. For a meta-analysis, effective N from summed counts overstates the true value when case fractions differ between cohorts; prefer a published `Neff`. `anchor_n_eff(ss, target)` rescales a per-variant column's median down to a supplied N, and never scales it up.
 
 `inspect_columns(path, n_eff=...)` uses the same sample-size arguments and
-precedence as `read_sumstats`, without reading data rows. It reports `n_eff`
-in `missing` when no N source resolves. On the CLI, supply constants with
+precedence as `read_sumstats`. It reports `n_eff` in `missing` when no N source
+resolves and samples up to 100 lines to flag effect columns without usable
+values. The reader uses the log odds ratio on rows with missing beta.
+On the CLI, supply constants with
 `allelign inspect gwas.tsv --n-eff 10000` or `--n-cases 2000 --n-controls 8000`;
 use `--column n_eff=Neff` to select a column.
 
@@ -75,7 +79,7 @@ Chromosome labels normalise as follows: the `chr` prefix and zero padding are dr
 `harmonize` checks a poorly matched alignment for a build mismatch by itself (`liftover="auto"`, the default). When fewer than half of the reference variants match and a sample of the unmatched rows shows the mismatch signature (identifiers the reference holds at other coordinates, or rows with coordinates that match almost nothing), `detect_build` asks which UCSC liftover makes the rows agree with the reference. If one does, the rows are lifted over and matched again. The result is kept when it matches at least twice as many variants, with a `RuntimeWarning` and `log["liftover"]` as the record. Inputs under 1,000 rows and well-matched alignments are never checked; `liftover=False` turns the check off. The two UCSC chain files are downloaded once into the cache and checked against their SHA-256.
 
 - `detect_build(ss, variants)` compares a sample of positions with the reference as they are and after each liftover; `relation` is `same`, `differ` (with both builds named) or `unclear`. No identifiers are needed.
-- `liftover(ss, source, target)` lifts rows in place. A row that cannot be lifted to a primary chromosome loses its coordinates and identifier, and a reversed block reverse-complements the alleles, so `beta` counts the same allele.
+- `liftover(ss, source, target)` returns a new table in input row order and a log. A row that cannot be lifted to a primary chromosome loses its coordinates and identifier, and a reversed block reverse-complements the alleles, so `beta` counts the same allele.
 - `check_build` refuses mismatched declared builds.
 - `reanchor_on_identifier` moves rows onto the reference's coordinates for their identifiers. It drops rows whose identifier is absent, held at several loci, or missing. It is not a liftover.
 
@@ -84,6 +88,9 @@ On the CLI, mismatched `--sumstats-build`/`--reference-build` declarations are l
 On the GWAS Catalog's harmonised triglyceride file (GCST002216, GRCh38) against a GRCh37 HapMap3 reference, the automatic check raised the matched variants from 9,849 to 988,678; 99.9999% of the lifted rows whose rsID the reference holds landed on its position.
 
 `harmonize_weights` applies the same rules to an ldpred3 weights table or a PGS Catalog score, aligns `AF_REF` (`1 - f` on a swap), and reports the matched share of squared weight.
+For PGS rows with a missing or slash-separated other allele, alignment requires
+a unique variant and effect sign. The log counts these matches in
+`n_matched_incomplete_alleles`.
 
 ## 3. Quality control
 
@@ -102,7 +109,9 @@ On the GWAS Catalog's harmonised triglyceride file (GCST002216, GRCh38) against 
 
 Diagnostics that drop nothing:
 
-- `impute_n_eff`: per-variant N (Privé et al. 2022).
+- `impute_n_eff`: per-variant N (Privé et al. 2022). Leave `info` unset for
+  standard errors from imputed dosages because those already reflect imputation
+  uncertainty.
 - `genomic_control_factor`: undoes genomic control when the LDSC intercept is established below 1.
 - `implied_sample_size`: binary traits only; scalar or per-variant `reported_n`,
   with a ratio of medians. The default median excludes nonpositive/nonfinite
@@ -165,6 +174,9 @@ ldpred3 0.9.9 reads and aligns through allelign, so these now hold for ldpred3 t
 `resolve_ref(ref)` names one published file; `download_ref(ref, dest)` fetches it atomically and writes a `<dest>.meta.json` sidecar (URL, provider, trait, SHA-256, filter counts). On the CLI: `allelign download REF [-o OUT] [--dry-run] [--keep-ids FILE] [--build GRCh37|GRCh38]`.
 
 A bare reference also stands in for the file itself. `fetch_ref(ref)` downloads into the cache (`cache_dir()`: `$ALLELIGN_CACHE_DIR`, else `~/.cache/allelign`) under `<REF>/<remote filename>` and returns it without network access thereafter; published files are immutable, so delete the cached file to force a fresh download. `allelign download REF` without `-o` does the same and prints the cached path. And `read_sumstats("GCST006630")`, `inspect_columns`, `detect_columns` and the `inspect`/`clean`/`align` commands call it for any reference that is not an existing local file (a local file always wins), recording the provenance under `parse_log["source"]`. A `PGS…` reference is refused there: it is a scoring file, not sumstats.
+
+PGS cache entries use `<REF>/<requested build>/<remote filename>`. The
+sidecar records the build actually downloaded.
 
 **Table 3. Source references.**
 

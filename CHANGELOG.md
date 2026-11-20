@@ -4,10 +4,32 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-20
+
 ### Added
 
 - `tests/test_consumer_surface.py` pins the private names ldpred3 imports from
   allelign, so renaming one fails here rather than in a fresh ldpred3 install.
+- `allelign align --min-reference-coverage` can require a minimum fraction of
+  the reference to survive alignment and screening.
+
+### Fixed
+
+- Detect build mismatches among unmatched rows with shared identifiers,
+  including when the summary statistics are much denser than the reference.
+  Liftover keeps variable-length allele and identifier strings.
+- Read log odds ratios wherever beta is missing, using the harmonised
+  effect columns together. Recognise fastGWA `AF1` and COVID-HGI `rsid`,
+  and retain packed Neale coordinates on sex chromosomes.
+- Filter downloads on the same identifier column the reader uses, cache PGS
+  scores by build preference, and validate transfer lengths before publishing
+  downloads. Cache filenames must be single path components.
+- Align PGS rows with incomplete allele pairs when the reference determines
+  a unique variant and effect sign. Export `allelefrequency_effect`.
+- New atomic outputs respect the umask and replacements preserve file
+  permissions. Empty CLI alignments exit 1 and retain diagnostics.
+- Classify a shared identifier at one disagreeing locus as unmatched, even
+  if the reference has several allele records there.
 
 ## [0.3.1] - 2026-11-05
 

@@ -75,7 +75,7 @@ def test_read_chain_refuses_overlapping_blocks(tmp_path):
         lo.read_chain(_chain_file(tmp_path, text))
 
 
-def test_liftover_moves_rows_in_place(tmp_path):
+def test_liftover_preserves_row_order_and_the_input(tmp_path):
     chain = lo.read_chain(_chain_file(tmp_path))
     ss = _sumstats(["rs1", "rs2", "rs3", "rs4"], ["1", "2", "1", ""], [101, 1, 201, 0],
                    ["A", "AC", "G", "T"], ["G", "T", "C", "C"])
@@ -89,6 +89,9 @@ def test_liftover_moves_rows_in_place(tmp_path):
     np.testing.assert_array_equal(lifted.beta, ss.beta)
     # The unmappable row can no longer match; the row without coordinates is kept.
     assert lifted.id.tolist() == ["rs1", "rs2", "", "rs4"]
+    assert ss.id.tolist() == ["rs1", "rs2", "rs3", "rs4"]
+    assert ss.ea.tolist() == ["A", "AC", "G", "T"]
+    assert lifted.id.dtype == lifted.ea.dtype == lifted.oa.dtype == object
     assert log["n_lifted"] == 2 and log["n_reverse_strand"] == 1
     assert log["n_unmapped"] == 1 and log["n_without_coordinates"] == 1
 
@@ -175,6 +178,23 @@ def test_harmonize_lifts_an_identifier_less_file(tmp_path, monkeypatch):
     with pytest.warns(RuntimeWarning, match="GRCh38 and the reference on GRCh37"):
         h = allelign.harmonize(ss, ref)
     assert len(h) == 12_000
+
+
+def test_liftover_counts_shared_ids_in_a_dense_sample(tmp_path, monkeypatch):
+    _install_shift_chains(monkeypatch, tmp_path, shift=37)
+    n = 36_000
+    rows = np.sort(np.random.default_rng(123).choice(n, 1200, replace=False))
+    ids = np.array([f"rs{i}" for i in range(n)])
+    pos = np.arange(1, n + 1) * 100
+    ref = Variants(chrom=np.full(rows.size, "1"), id=ids[rows], pos=pos[rows],
+                   a1=np.full(rows.size, "A"), a2=np.full(rows.size, "G")).freeze()
+    ss = _sumstats(ids, np.full(n, "1"), pos + 37,
+                   np.full(n, "A"), np.full(n, "G"))
+    before = allelign.harmonize(ss, ref, liftover=False)
+    assert allelign.reference_coverage(ss, ref, before)["build_mismatch_suspected"]
+    with pytest.warns(RuntimeWarning, match="lifted"):
+        lifted = allelign.harmonize(ss, ref)
+    np.testing.assert_array_equal(lifted.src_index, rows)
 
 
 @pytest.fixture

@@ -414,8 +414,12 @@ def impute_n_eff(se, af_ref, n_total, *, anchor_quantile=0.99,
     From Prive et al. (2022), ``N_j ~ 1 / (se_j^2 2 f_j (1-f_j))``. The
     unknown constant is set so that the median over equal-count AF bins of the
     per-bin ``anchor_quantile`` equals ``n_total`` (the best-typed variants in
-    each frequency range carry the full sample). Optionally multiplied by
-    INFO; non-finite values become ``n_total``; clipped at ``n_total``.
+    each frequency range carry the full sample). Non-finite values become
+    ``n_total``, and estimates are clipped at ``n_total``.
+
+    Supply ``info`` only when the standard errors exclude imputation
+    uncertainty. Standard errors from an imputed-dosage GWAS already reflect
+    the reduced genotype variance, so multiplying by INFO counts it twice.
 
     Returns ``(n_imp, log)``. ``anchor_quantile`` is in ``[0, 1]`` and
     ``anchor_bins`` is an integer of at least 1.

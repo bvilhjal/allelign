@@ -2,6 +2,7 @@
 
 import json
 import math
+import stat
 import warnings
 
 import numpy as np
@@ -13,6 +14,7 @@ from allelign import (BuildMismatchError, Variants, check_build, harmonize,
                       read_weights, reanchor_on_identifier, WeightsTable,
                       write_pgs_scoring_file, write_weights)
 from allelign.cli import main
+from allelign import status
 from allelign.sumstats import Sumstats
 
 
@@ -36,6 +38,7 @@ def test_pgs_export_differs_from_frozen_score_by_one_constant(tmp_path):
     assert sf.meta["sd_source"] == "empirical"
     text = out.read_text()
     assert f"#variants_number={len(wt)}" in text
+    assert "\teffect_weight\tallelefrequency_effect\n" in text
     assert "variants_genome_wide" not in text
     rng = np.random.default_rng(1)
     g = rng.binomial(2, wt.af_ref, (200, len(wt))).astype(float)
@@ -44,6 +47,21 @@ def test_pgs_export_differs_from_frozen_score_by_one_constant(tmp_path):
     diff = raw - frozen
     assert np.ptp(diff) < 1e-9 * np.abs(frozen).max()
     assert diff.mean() == pytest.approx(sf.weight @ (2 * wt.af_ref))
+
+
+def test_atomic_output_uses_umask_and_preserves_existing_permissions(tmp_path):
+    from allelign._common import atomic_text
+
+    ordinary = tmp_path / "ordinary"
+    ordinary.write_text("")
+    out = tmp_path / "atomic.gz"
+    with atomic_text(out) as fh:
+        fh.write("first")
+    assert stat.S_IMODE(out.stat().st_mode) == stat.S_IMODE(ordinary.stat().st_mode)
+    out.chmod(0o640)
+    with atomic_text(out) as fh:
+        fh.write("second")
+    assert stat.S_IMODE(out.stat().st_mode) == 0o640
 
 
 def test_pgs_export_without_sd_source_says_unspecified(tmp_path):
@@ -58,6 +76,47 @@ def test_pgs_export_without_sd_source_says_unspecified(tmp_path):
     with pytest.warns(RuntimeWarning, match="unspecified"):
         write_pgs_scoring_file(tmp_path / "s.txt", wt, genome_build="GRCh38")
     assert "#sd_source=unspecified" in (tmp_path / "s.txt").read_text()
+
+
+def test_pgs_incomplete_alleles_require_a_unique_row_and_sign(tmp_path):
+    path = tmp_path / "score.tsv"
+    path.write_text("rsID\tchr_name\tchr_position\teffect_allele\t"
+                    "hm_inferOtherAllele\teffect_weight\n"
+                    "rs1\t1\t100\tG\tA/C\t0.1\n"
+                    "rs2\t1\t200\tT\tA/C\t0.2\n"
+                    "rs3\t1\t300\tA\t.\t0.3\n"
+                    "rs4\t1\t400\tA\t.\t0.4\n"
+                    "rs5\t1\t500\tA\tC\t0.5\n"
+                    "rs6\t1\t600\tA\t.\t0.6\n")
+    score = read_scoring_file(path)
+    ref = Variants(id=np.array(["rs1", "rs2", "rs3", "rs4", "rs4", "rs5", "rs6"]),
+                   chrom=np.full(7, "1"),
+                   pos=np.array([100, 200, 300, 400, 400, 500, 600]),
+                   a1=np.full(7, "A"), a2=np.array(["G", "G", "T", "C", "G", "G", "G"]))
+    codes = status.new_status(len(score))
+    h = harmonize_weights(score, ref, status=codes)
+    vector = harmonize_weights(score, ref)
+    np.testing.assert_array_equal(h.src_index, [0, 1, 5])
+    np.testing.assert_array_equal(h.weight, [-0.1, 0.2, 0.6])
+    np.testing.assert_array_equal(vector.weight, h.weight)
+    assert vector.log == h.log
+    assert h.log["n_matched_incomplete_alleles"] == 3
+    assert codes.tolist() == [0, 0, status.ALLELE_MISMATCH,
+                              status.ALLELE_MISMATCH, status.ALLELE_MISMATCH, 0]
+
+
+def test_cli_align_fails_for_empty_or_below_requested_coverage(tmp_path):
+    path = tmp_path / "sumstats.tsv"
+    path.write_text("ID CHR POS EA OA BETA SE N\nrs1 1 100 A G 0.1 0.01 2000\n")
+    ref = tmp_path / "ref.bim"
+    ref.write_text("1 rs1 0 100 A G\n1 rs2 0 200 A G\n")
+    out = tmp_path / "aligned.tsv"
+    args = ["align", str(path), "--reference", str(ref), "-o", str(out)]
+    assert main(args) == 0
+    assert main(args + ["--min-reference-coverage", "0.51"]) == 1
+    assert len(read_sumstats(out)) == 1   # Details remain available to inspect.
+    ref.write_text("1 rs2 0 200 A G\n")
+    assert main(args) == 1
 
 
 def test_read_scoring_file_rules(tmp_path):

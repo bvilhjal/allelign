@@ -967,7 +967,8 @@ def test_reference_coverage_names_the_cause_of_a_thin_alignment():
                       flipped=np.array([], dtype=bool))
     cov = reference_coverage(bad, variants, none)
     assert cov["n_unmatched_rows"] == 1
-    assert cov["n_unmatched_id_elsewhere"] == 1
+    assert cov["n_unmatched_id_elsewhere"] == 0
+    assert not cov["build_mismatch_suspected"]
 
 
 def test_coverage_thresholds_are_the_shared_ones():

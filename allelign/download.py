@@ -43,10 +43,10 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import http.client
 import json
 import os
 import re
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -55,7 +55,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from .sumstats import COLUMN_ALIASES
+from ._common import atomic_output
+from .build import normalize_build
+from .sumstats import _build_colmap, _sniff_delimiter
 
 __all__ = ["cache_dir", "download_ref", "fetch_ref", "parse_ref",
            "read_keep_ids", "resolve_ref"]
@@ -112,7 +114,6 @@ USER_AGENT = f"allelign/{__version__} (+https://github.com/bvilhjal/allelign)"
 #: Some providers carry several comma-joined identifiers per row (FinnGen's
 #: ``rsids``); a joined cell matches a keep set when any part does.
 ID_SEPARATOR = ","
-_ID_COLUMNS = frozenset(COLUMN_ALIASES["id"])
 
 TIMEOUT = 60          # index, HEAD and metadata requests
 STREAM_TIMEOUT = 300  # data transfers
@@ -375,7 +376,7 @@ def _resolve_pgs(pgs_id, build, opener):
                         or {}).items():
         if isinstance(entry, dict) and isinstance(entry.get("positions"), str):
             urls[name] = entry["positions"]
-    choice = build or "GRCh37"
+    choice = normalize_build(build) or "GRCh37"
     order = [choice, "GRCh37" if choice != "GRCh37" else "GRCh38"]
     genome_build = next((b for b in order if urls.get(b)), None)
     url = urls[genome_build] if genome_build else plain
@@ -452,23 +453,35 @@ def resolve_ref(ref, *, build=None, opener=None):
 @contextmanager
 def _atomic_binary(path):
     """Stream bytes so only a complete file is ever published at ``path``."""
-    path = Path(path)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "wb") as fh:
+    with atomic_output(path) as temporary:
+        with temporary.open("wb") as fh:
             yield fh
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+
+
+class _CountedResponse:
+    """Count encoded bytes before decompression or row selection."""
+
+    def __init__(self, response):
+        self.response = response
+        self.n_bytes = 0
+
+    def read(self, size=-1):
+        chunk = self.response.read(size)
+        self.n_bytes += len(chunk)
+        return chunk
+
+    def __iter__(self):
+        for line in self.response:
+            self.n_bytes += len(line)
+            yield line
 
 
 def _text_lines(response, url):
     """Iterate decoded lines of a plain or gzip remote file."""
-    source = gzip.GzipFile(fileobj=response) if url.endswith(".gz") \
-        else response
+    compressed = urllib.parse.urlsplit(url).path.lower().endswith((".gz", ".bgz"))
+    source = gzip.GzipFile(fileobj=response) if compressed else response
     for raw in source:
         yield raw.decode("utf-8", "replace").rstrip("\r\n")
 
@@ -513,11 +526,16 @@ def _download_plan(plan, dest, *, keep_ids=None, meta=True, opener):
         raise ValueError(_request_failed(exc, label)) from exc
     try:
         with response, _atomic_binary(dest) as out:
+            if getattr(response, "status", None) == 206:
+                raise ValueError(f"{label}: server returned a partial response")
+            length = response.headers.get("Content-Length")
+            expected = int(length) if length is not None else plan.get("remote_bytes") or None
+            remote = _CountedResponse(response)
             if not filtering:
-                while chunk := response.read(CHUNK):
+                while chunk := remote.read(CHUNK):
                     out.write(chunk)
             else:
-                lines = _text_lines(response, url)
+                lines = _text_lines(remote, url)
                 try:
                     header = next(lines)
                 except StopIteration:
@@ -529,18 +547,23 @@ def _download_plan(plan, dest, *, keep_ids=None, meta=True, opener):
                                            compresslevel=1, mtime=0)
                 try:
                     counts = _write_filtered(lines, header, writer or out,
-                                             keep_ids, plan.get("row_filter"))
+                                             keep_ids, plan.get("row_filter"),
+                                             provider=plan["provider"])
                 finally:
                     if writer is not None:
                         writer.close()
+            if expected is not None and remote.n_bytes != expected:
+                raise ValueError(f"{label}: download length mismatch "
+                                 f"(received {remote.n_bytes:,} of {expected:,} bytes)")
     except (urllib.error.HTTPError, urllib.error.URLError, OSError,
-            EOFError) as exc:
+            EOFError, http.client.IncompleteRead) as exc:
         raise ValueError(f"{label}: download failed ({exc})") from exc
     record = {"allelign": __version__, "ref": plan["ref"],
               "provider": plan["provider"], "label": label, "url": url,
               "genome_build": plan.get("genome_build"),
               "trait": plan.get("trait") or None,
-              "remote_bytes": plan.get("remote_bytes"),
+              "remote_bytes": expected,
+              "n_remote_bytes_read": remote.n_bytes,
               "sha256": _sha256_of(dest),
               "n_bytes_written": dest.stat().st_size,
               "fetched_at": datetime.now(timezone.utc).isoformat()}
@@ -581,21 +604,37 @@ def _sidecar(path):
     return path.with_name(path.name + ".meta.json")
 
 
-def _cached_file(directory):
+def _cached_file(directory, *, build=None):
     """The one completely downloaded file in a cache directory, or None.
 
-    Complete means its provenance sidecar is beside it: downloads are
-    atomic and the sidecar is written last, so a file without one is
-    never trusted.
+    The sidecar is written last and records the transfer and output sizes.
     """
     if not directory.is_dir():
         return None
     files = [p for p in sorted(directory.iterdir())
              if p.is_file() and not p.name.startswith(".")
              and not p.name.endswith(".meta.json")]
-    if len(files) == 1 and _sidecar(files[0]).is_file():
+    if len(files) == 1 and _cache_complete(files[0], build=build):
         return files[0]
     return None
+
+
+def _cache_complete(path, *, build=None):
+    try:
+        with _sidecar(path).open(encoding="utf-8") as fh:
+            record = json.load(fh)
+        size = path.stat().st_size
+    except (OSError, ValueError):
+        return False
+    if not isinstance(record, dict) or record.get("n_bytes_written") != size:
+        return False
+    if build is not None and record.get("genome_build") != build:
+        return False
+    expected = record.get("remote_bytes")
+    received = record.get("n_remote_bytes_read")
+    if received is None and "n_input" not in record:
+        received = size  # Legacy sidecar for a verbatim download.
+    return not expected or received is None or received == expected
 
 
 def fetch_ref(ref, *, build=None, cache=None, opener=None):
@@ -603,36 +642,58 @@ def fetch_ref(ref, *, build=None, cache=None, opener=None):
 
     The file lands at ``<cache>/<REF>/<remote filename>`` with its
     provenance sidecar; later calls return it without any network access.
+    PGS scores use a subdirectory for the requested build (default GRCh37).
     Published summary statistics are immutable, so a cached file is never
     refreshed -- delete it to force a new download. ``cache`` overrides
     :func:`cache_dir`. Returns a :class:`pathlib.Path`.
     """
     if opener is None:
         opener = _open
-    if parse_ref(ref) is None:
+    parsed = parse_ref(ref)
+    if parsed is None:
         # resolve_ref raises the user-readable form of this error.
         resolve_ref(ref, build=build, opener=opener)
     key = re.sub(r"[^A-Za-z0-9._-]", "_", ref.strip().upper())
     directory = (Path(cache) if cache is not None else cache_dir()) / key
+    preferred_build = None
+    if parsed["provider"] == "pgs":
+        preferred_build = normalize_build(build) or "GRCh37"
+        directory /= preferred_build
     cached = _cached_file(directory)
+    if cached is None and preferred_build is not None:
+        cached = _cached_file(directory.parent, build=preferred_build)
     if cached is not None:
         return cached
     plan = resolve_ref(ref, build=build, opener=opener)
     name = urllib.parse.unquote(
-        urllib.parse.urlparse(plan["url"]).path.rsplit("/", 1)[-1])
+        urllib.parse.urlsplit(plan["url"]).path.rsplit("/", 1)[-1])
+    if (not name or name.startswith(".") or name.endswith(".meta.json")
+            or any(char in name for char in ("/", "\\", ":", "\0"))):
+        raise ValueError(f"{plan['label']}: invalid remote filename {name!r}")
     dest = directory / name
-    if dest.is_file() and _sidecar(dest).is_file():
+    if _cache_complete(dest):
         return dest
     directory.mkdir(parents=True, exist_ok=True)
     _download_plan(plan, dest, opener=opener)
     return dest
 
 
-def _write_filtered(lines, header, out, keep_ids, row_filter):
+def _write_filtered(lines, header, out, keep_ids, row_filter, *, provider):
     """Write ``header`` plus the rows passing both filters; return counts."""
-    columns = [c.strip().lower() for c in header.split("\t")]
-    id_index = next((i for i, c in enumerate(columns)
-                     if c in _ID_COLUMNS), None)
+    if provider == "pgs":
+        while header.startswith("#"):
+            out.write((header + "\n").encode("utf-8"))
+            header = next(lines, "")
+    delim = _sniff_delimiter(header)
+    fields = header.lstrip("\ufeff").split(delim)
+    columns = [c.strip().lower() for c in fields]
+    id_index = None
+    if keep_ids is not None:
+        if provider == "pgs":
+            from .weights import SCORING_COLUMNS, _pick
+            id_index, _ = _pick(fields, SCORING_COLUMNS["id"])
+        else:
+            id_index = _build_colmap(fields, {})[0].get("id")
     if keep_ids is not None and id_index is None:
         raise ValueError("keep-ids: the remote file has no id column "
                          f"among {columns}")
@@ -652,13 +713,15 @@ def _write_filtered(lines, header, out, keep_ids, row_filter):
         if not line:
             continue
         n_input += 1
-        cells = line.split("\t")
+        cells = line.split(delim)
         if keep_ids is not None:
+            if id_index >= len(cells):
+                continue
             parts = cells[id_index].split(ID_SEPARATOR)
             if not any(part.strip() in keep_ids for part in parts):
                 continue
-        if filter_index is not None and \
-                cells[filter_index].strip().lower() != filter_value:
+        if filter_index is not None and (filter_index >= len(cells)
+                or cells[filter_index].strip().lower() != filter_value):
             continue
         n_kept += 1
         out.write(line.encode("utf-8"))

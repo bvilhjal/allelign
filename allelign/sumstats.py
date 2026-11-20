@@ -40,6 +40,7 @@ above are documented differences.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import islice
 import json
 import math
 import os
@@ -49,6 +50,7 @@ import warnings
 import numpy as np
 
 from ._common import atomic_text, open_text
+from .alleles import normalize_chrom
 
 __all__ = ["Sumstats", "read_sumstats", "detect_columns", "inspect_columns",
            "write_sumstats", "rescale_n_eff", "anchor_n_eff",
@@ -235,6 +237,12 @@ def _build_colmap(header, overrides):
                 colmap[field] = lower.index(a)
                 break
     layout = {}
+    # COVID-HGI's SNP field may carry coordinates from a different build
+    # than its CHR/POS columns. Use the stable rsID for this layout.
+    if {"snp", "rsid", "all_inv_var_meta_beta"}.issubset(lower):
+        colmap["id"] = lower.index("rsid")
+    if "eaf" not in colmap and {"a1", "a2", "af1"}.issubset(lower):
+        colmap["eaf"] = lower.index("af1")  # GCTA fastGWA counts A1
     # SAIGE reports effects and frequencies for Allele2. Allele1/Allele2 alone
     # are ambiguous across programs, so require a SAIGE-specific column.
     if {"allele1", "allele2"}.issubset(lower) and any(
@@ -262,7 +270,10 @@ def _build_colmap(header, overrides):
                 colmap["beta"] = lower.index("hm_beta")
             else:
                 colmap.pop("beta", None)
+            if "hm_odds_ratio" in lower:
                 colmap["or"] = lower.index("hm_odds_ratio")
+            else:
+                colmap.pop("or", None)
             # The submitted frequency counts the submitted effect allele, which
             # harmonisation may have swapped: without its hm_ counterpart it
             # would describe the other allele on those rows.
@@ -324,6 +335,8 @@ def _build_colmap(header, overrides):
             colmap[field] = lower.index(name)
     if "or" in overrides and "beta" not in overrides:
         colmap.pop("beta", None)  # explicit OR semantics override a BETA alias
+    if "beta" in overrides and "or" not in overrides:
+        colmap.pop("or", None)
     if "oa" in overrides or "ea" in overrides:
         layout.pop("plink2_alt", None)
         layout.pop("variant_string", None)
@@ -428,10 +441,12 @@ def detect_columns(path, **col_overrides):
 
 def inspect_columns(path, *, n_eff=None, n_cases=None, n_controls=None,
                     **col_overrides):
-    """Header-only preflight: mapping, recognised layout and N source.
+    """Preflight: mapping, recognised layout, N source and an effect sample.
 
     Returns a dict with ``header``, ``mapping``, ``layout``, ``n_source`` and
     ``missing`` (required fields that could not be resolved, including N).
+    ``effect_sample`` reports any mapped effect columns without usable values
+    in the first 100 lines after the header.
     Sample-size arguments follow :func:`read_sumstats`: numbers supply a
     constant N; strings name columns or their zero-based indices.
     """
@@ -439,7 +454,23 @@ def inspect_columns(path, *, n_eff=None, n_cases=None, n_controls=None,
     path, provenance = _resolve_source(path)
     with open_text(path) as fh:
         delim, header = _read_header(fh)
-    colmap, layout = _build_colmap(header, col_overrides)
+        colmap, layout = _build_colmap(header, col_overrides)
+        effects = {field: colmap[field] for field in ("beta", "or") if field in colmap}
+        pending = effects.copy()
+        n_sampled = 0
+        for raw in (islice(fh, 100) if effects else ()):
+            text = raw.rstrip("\r\n")
+            if not text:
+                continue
+            n_sampled += 1
+            cells = text.split(delim) if delim else text.split()
+            for field, index in effects.items():
+                if field in pending and index < len(cells):
+                    effect = _to_float(cells[index])
+                    if math.isfinite(effect) and (field == "beta" or effect > 0):
+                        del pending[field]
+            if not pending:
+                break
     lower = [h.strip().lower() for h in header]
     source, detail = _n_plan(colmap, lower, col_overrides, forced_n)
     missing = []
@@ -458,6 +489,11 @@ def inspect_columns(path, *, n_eff=None, n_cases=None, n_controls=None,
                        for k, v in layout.items()},
             "n_source": source if detail is None else f"{source}:{detail}",
             "missing": missing}
+    if n_sampled and pending:
+        info["effect_sample"] = {
+            "n_rows": n_sampled,
+            "columns_without_usable_values": [header[i] for i in pending.values()],
+        }
     if provenance is not None:
         info["source"] = provenance
     return info
@@ -628,7 +664,7 @@ def read_sumstats(path, *, n_eff=None, n_cases=None, n_controls=None,
             # METAL-style files may pack the coordinates into the id
             # (MarkerName CHR:POS:TYPE) with no chrom/pos columns at all;
             # unpack them there, and only there.
-            if "chrom" not in colmap or "pos" not in colmap:
+            if "variant_string" not in layout and ("chrom" not in colmap or "pos" not in colmap):
                 filled = _fill_coords_from_id(ss, "chrom" not in colmap,
                                                "pos" not in colmap)
                 if filled:
@@ -906,6 +942,7 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
     i_chrom = colmap.get("chrom")
     i_pos = colmap.get("pos")
     i_beta = colmap.get("beta")
+    i_or = colmap.get("or")
     i_se = colmap.get("se")
     i_pval = colmap.get("pval")
     i_log10p = colmap.get("log10p")
@@ -947,11 +984,11 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
                 starts, ends = starts[:, :m][:, keep], ends[:, :m][:, keep]
                 m = int(keep.sum())
 
-        def floats(i):
-            s = starts[i, :m]
-            e = ends[i, :m]
-            out = np.empty(m)
-            ok = np.empty(m, dtype=np.bool_)
+        def floats(i, rows=slice(None)):
+            s = starts[i, :m][rows]
+            e = ends[i, :m][rows]
+            out = np.empty(s.size)
+            ok = np.empty(s.size, dtype=np.bool_)
             parse_decimal(b, s, e, _POW10, out, ok)
             bad = np.flatnonzero(~ok)
             if len(bad):
@@ -988,16 +1025,17 @@ def _parse_rows_jit(fh, delim, colmap, plan, kernels):
                 out[k] = transform(text[s[k]:e[k]])
             return out
 
-        if i_beta is not None:
-            beta = floats(i_beta)
-        else:
-            orv = floats(colmap["or"])
-            beta = np.full(m, nan)
-            pos_or = orv > 0
+        beta = floats(i_beta) if i_beta is not None else np.full(m, nan)
+        if i_or is not None:
+            missing_beta = (slice(None) if i_beta is None
+                            else np.flatnonzero(np.isnan(beta)))
+            orv = floats(i_or, missing_beta)
+            pos_or = (orv > 0) & np.isfinite(orv)
             # math.log, not np.log: NumPy's SIMD log may differ from libm in
             # the last ulp, and the reference uses math.log.
-            beta[pos_or] = np.fromiter(map(math.log, orv[pos_or].tolist()),
-                                       dtype=float, count=int(pos_or.sum()))
+            target = pos_or if i_beta is None else missing_beta[pos_or]
+            beta[target] = np.fromiter(
+                map(math.log, orv[pos_or].tolist()), dtype=float, count=int(pos_or.sum()))
         se = floats(i_se) if i_se is not None else np.full(m, nan)
         n_se_from_p = 0
         need = np.isnan(se) & ~np.isnan(beta)
@@ -1120,6 +1158,7 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
     forced_n = plan["forced"]
     i_alt = layout.get("plink2_alt")
     i_var = layout.get("variant_string")
+    variant_chroms = {}
     used = [i for i in (i_id, i_chrom, i_pos, i_ea, i_oa, i_beta, i_or, i_se,
                         i_pval, i_log10p, i_n, i_nca, i_nco, i_eaf, i_info,
                         i_alt, i_var, i_test) if i is not None]
@@ -1144,11 +1183,10 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
             n_dropped_test += 1
             continue
 
-        if i_beta is not None:
-            beta = _to_float(f[i_beta])
-        else:
+        beta = _to_float(f[i_beta]) if i_beta is not None else nan
+        if i_or is not None and isnan(beta):
             orv = _to_float(f[i_or])
-            beta = math.log(orv) if orv > 0 else nan
+            beta = math.log(orv) if orv > 0 and isfinite(orv) else nan
 
         se = _to_float(f[i_se]) if i_se is not None else nan
         if isnan(se) and not isnan(beta) and beta != 0:
@@ -1179,7 +1217,10 @@ def _parse_rows_python(fh, delim, colmap, layout, plan, _pool=None):
             else:
                 c, p_tok, ref, alt = "", "", "", ""
             if i_chrom is None:
-                chrom_add(pool(c, c))
+                norm = variant_chroms.get(c)
+                if norm is None:
+                    norm = variant_chroms[c] = normalize_chrom(c)
+                chrom_add(pool(norm, norm))
             if i_pos is None:
                 pos_v = _to_float(p_tok)
                 pos_add(int(pos_v) if isfinite(pos_v) else 0)

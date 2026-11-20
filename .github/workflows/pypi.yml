@@ -1,9 +1,7 @@
 name: Publish to PyPI
 
-# Trusted publishing: create the "allelign" project on PyPI once and register
-# this workflow as a trusted publisher there (repository bvilhjal/allelign,
-# environment "pypi", workflow file .github/workflows/pypi.yml). Until then
-# this workflow only runs when a GitHub release is published.
+# The existing "allelign" project needs a PyPI Trusted Publisher for
+# owner bvilhjal, repository allelign, workflow pypi.yml and environment pypi.
 on:
   release:
     types: [published]

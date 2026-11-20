@@ -17,7 +17,7 @@ import numpy as np
 
 from . import __version__
 from . import status as _st
-from ._common import atomic_text
+from ._common import atomic_text, finite_control
 
 
 def _columns(pairs):
@@ -96,6 +96,8 @@ def cmd_align(args):
     from .sumstats import Sumstats
     from .variants import read_variants
 
+    min_coverage = finite_control("minimum reference coverage",
+                                  args.min_reference_coverage, lower=0, upper=1)
     lift_declared = None
     try:
         build = check_build(args.sumstats_build, args.reference_build)
@@ -161,6 +163,14 @@ def cmd_align(args):
     _write_log(args.out, log)
     print(f"allelign: aligned {len(aligned):,} of {len(ss):,} rows to "
           f"{len(ref):,} reference variants -> {args.out}", file=sys.stderr)
+    if not len(aligned):
+        print("allelign: no variants survived alignment and screening", file=sys.stderr)
+        return 1
+    fraction = len(aligned) / len(ref)
+    if fraction < min_coverage:
+        print(f"allelign: final reference coverage {fraction:.2%} is below "
+              f"the required {min_coverage:.2%}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -282,6 +292,9 @@ def build_parser():
     _add_read_options(p)
     _add_qc_options(p)
     p.add_argument("--reference", required=True, help=".bim or .pvar file")
+    p.add_argument("--min-reference-coverage", type=float, default=0.0,
+                   metavar="FRACTION",
+                   help="exit 1 below this fraction of the reference after screening")
     p.add_argument("-o", "--out", required=True)
     p.add_argument("--keep-ambiguous", action="store_true",
                    help="keep strand-ambiguous (A/T, C/G) variants")

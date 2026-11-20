@@ -43,8 +43,9 @@ flagged as such; its build and alleles are the submitter's.
 allelign inspect gwas.h.tsv.gz
 ```
 
-This prints the detected column mapping without reading data rows, and
-exits non-zero when a field is missing. Providers that publish no sample
+This prints the detected column mapping, flags effect columns with no usable
+values in the sample, and exits non-zero when a required column is missing.
+Providers that publish no sample
 size (FinnGen, the eQTL Catalogue) need the constant on the later steps:
 
 ```bash
@@ -70,17 +71,18 @@ allelign align clean.tsv.gz --reference reference.bim -o aligned.tsv.gz \
 ```
 
 Effects come out on the reference's counted alleles. When coverage is thin
-the closing message names the cause. Unmatched identifiers plus a build
-mismatch means declare the builds and reanchor on rsIDs:
+the closing message names the likely cause. If the builds are known,
+declare them to lift the summary statistics to the reference build.
 
 ```bash
 allelign align gwas.h.tsv.gz --reference reference.bim -o aligned.tsv.gz \
-    --sumstats-build GRCh38 --reference-build GRCh37 --reanchor-on-identifier
+    --sumstats-build GRCh38 --reference-build GRCh37
 ```
 
-Absent identifiers simply mean little overlap. With a `.bed` beside the
+Use `--min-reference-coverage 0.1` to require at least 10% of the reference
+in the final output. With a `.bed` beside the
 `.bim`, `--ld-screen --ld-keep eur_samples.txt` adds the LD-consistency
-screen and marks its drops `dentist_out`; a drop rate of several percent
+screen and marks its drops `dentist_outlier`; a drop rate of several percent
 usually indicts the reference, not the statistics (guide.md §3, Limits).
 
 ## 5. Scores

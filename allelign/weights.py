@@ -605,7 +605,7 @@ def write_pgs_scoring_file(path, wt, *, genome_build, pgs_id=None,
         for line in header:
             fh.write(line + "\n")
         fh.write("rsID\tchr_name\tchr_position\teffect_allele\tother_allele"
-                 "\teffect_weight\tAF\n")
+                 "\teffect_weight\tallelefrequency_effect\n")
         for vid, c, p, a1, a2, ew, af_ in zip(
                 wt.id, wt.chrom, wt.pos, wt.a1, wt.a2, effect_weight,
                 np.asarray(wt.af_ref, dtype=float)):

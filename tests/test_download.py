@@ -447,3 +447,82 @@ def test_cli_download_without_out_uses_cache(tmp_path, monkeypatch, capsys):
     assert main(["download", "GCST006630", "--keep-ids",
                  str(tmp_path / "ids.txt")]) == 2
     assert "--keep-ids needs -o" in capsys.readouterr().err
+
+
+def test_keep_ids_uses_the_same_identifier_as_the_reader(tmp_path):
+    body = _gz(["SNP\trsID\tCHR\tPOS\tA1\tA2\tall_inv_var_meta_beta\tSE\tN",
+                "1:200:A:G\trs1\t1\t100\tG\tA\t0.1\t0.01\t1000",
+                "1:400:A:C\trs2\t1\t300\tC\tA\t0.2\t0.01\t1000"])
+    url = dl.covidhgi_url("C2")
+    opener = FakeOpener({url: FakeResponse(body, {"Content-Length": len(body)})})
+    out = tmp_path / "subset.tsv.gz"
+    record = dl.download_ref("COVIDHGI:R7:C2", out, keep_ids={"rs1"}, opener=opener)
+    assert record["n_kept"] == 1
+    assert read_sumstats(out).id.tolist() == ["rs1"]
+
+
+def test_pgs_cache_is_keyed_by_requested_build(tmp_path):
+    urls = {build: f"https://host/{build}.txt.gz" for build in ("GRCh37", "GRCh38")}
+    score = {"ftp_harmonized_scoring_files": {
+        build: {"positions": url} for build, url in urls.items()}}
+    routes = {url: FakeResponse(gzip.compress(build.encode())) for build, url in urls.items()}
+    routes[dl.PGS_SCORE_REST.format(pgs_id="PGS000001")] = FakeResponse(json.dumps(score))
+    opener = FakeOpener(routes)
+    default = dl.fetch_ref("PGS000001", cache=tmp_path, opener=opener)
+    new_build = dl.fetch_ref("PGS000001", build="GRCh38", cache=tmp_path, opener=opener)
+    assert default != new_build
+    assert gzip.decompress(default.read_bytes()) == b"GRCh37"
+    assert gzip.decompress(new_build.read_bytes()) == b"GRCh38"
+    offline = FakeOpener({})
+    assert dl.fetch_ref("PGS000001", build="hg38", cache=tmp_path, opener=offline) == new_build
+    assert dl.fetch_ref("PGS000001", build="hg19", cache=tmp_path, opener=offline) == default
+
+
+def test_legacy_pgs_cache_is_only_reused_for_its_build(tmp_path):
+    legacy = tmp_path / "PGS000001" / "GRCh38.txt.gz"
+    legacy.parent.mkdir()
+    body38 = gzip.compress(b"GRCh38")
+    legacy.write_bytes(body38)
+    dl._sidecar(legacy).write_text(json.dumps(
+        {"n_bytes_written": len(body38), "genome_build": "GRCh38"}))
+    url = "https://host/GRCh37.txt.gz"
+    score = {"ftp_harmonized_scoring_files": {"GRCh37": {"positions": url}}}
+    body37 = gzip.compress(b"GRCh37")
+    opener = FakeOpener({
+        dl.PGS_SCORE_REST.format(pgs_id="PGS000001"): FakeResponse(json.dumps(score)),
+        url: FakeResponse(body37)})
+    assert dl.fetch_ref("PGS000001", cache=tmp_path, opener=opener).read_bytes() == body37
+    assert dl.fetch_ref("PGS000001", build="GRCh38", cache=tmp_path,
+                        opener=FakeOpener({})) == legacy
+
+
+def test_cache_filename_must_be_one_component(tmp_path, monkeypatch):
+    monkeypatch.setattr(dl, "resolve_ref", lambda *_args, **_kwargs: {
+        "url": "https://host/folder%2Fstudy.tsv", "label": "Study"})
+    with pytest.raises(ValueError, match="invalid remote filename"):
+        dl.fetch_ref("GCST006630", cache=tmp_path, opener=FakeOpener({}))
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("keep_ids", [None, {"rs1"}])
+def test_short_transfer_never_replaces_output(tmp_path, keep_ids):
+    url = "https://host/study.tsv"
+    body = b"rsid\tchrom\tpos\nrs1\t1\t100\n"
+    plan = {"url": url, "label": "Study", "ref": "Study", "provider": "gbmi"}
+    opener = FakeOpener({url: FakeResponse(body, {"Content-Length": len(body) + 10})})
+    out = tmp_path / "study.tsv"
+    out.write_bytes(b"previous contents")
+    with pytest.raises(ValueError, match="download length mismatch"):
+        dl._download_plan(plan, out, keep_ids=keep_ids, opener=opener)
+    assert out.read_bytes() == b"previous contents"
+    assert not dl._sidecar(out).exists()
+
+
+def test_fetch_ref_repairs_a_short_legacy_cache_entry(tmp_path):
+    path = tmp_path / "GCST006630" / "Evangelou_30224653_DBP.txt.gz"
+    path.parent.mkdir()
+    path.write_bytes(SUMSTATS_BODY[:10])
+    dl._sidecar(path).write_text(json.dumps(
+        {"n_bytes_written": 10, "remote_bytes": len(SUMSTATS_BODY)}))
+    assert dl.fetch_ref("GCST006630", cache=tmp_path, opener=submitted_routes()) == path
+    assert path.read_bytes() == SUMSTATS_BODY

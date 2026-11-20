@@ -191,6 +191,44 @@ def test_daner_control_frequency_and_neff(tmp_path, jit):
     assert ss.parse_log["layout"]["eaf_from"] == "FRQ_U_5000"
 
 
+def test_harmonised_odds_ratio_fills_missing_beta_without_mixing_alleles(tmp_path, jit):
+    path = _write(tmp_path,
+                  "hm_effect_allele hm_other_allele hm_beta hm_odds_ratio "
+                  "effect_allele other_allele beta odds_ratio se n\n"
+                  "A G NA 0.8 G A 3 1.25 0.01 1000\n"
+                  "A G 0.2 8 G A 3 1.25 0.01 1000\n"
+                  "A G NA NA G A 3 1.25 0.01 1000\n")
+    ss = read_sumstats(path)
+    np.testing.assert_equal(ss.beta, [math.log(0.8), 0.2, np.nan])
+    assert ss.ea.tolist() == ["A"] * 3
+    np.testing.assert_equal(read_sumstats(path, beta="hm_beta").beta,
+                            [np.nan, 0.2, np.nan])
+    np.testing.assert_equal(read_sumstats(path, **{"or": "hm_odds_ratio"}).beta,
+                            [math.log(0.8), math.log(8), np.nan])
+
+
+def test_plain_odds_ratio_fallback_and_inspect(tmp_path, jit):
+    path = _write(tmp_path, "A1 A2 BETA OR N P\nA C NA 1.3 1000 1e-3\n")
+    check = inspect_columns(path)
+    assert check["effect_sample"] == {
+        "n_rows": 1, "columns_without_usable_values": ["BETA"]}
+    assert not check["missing"]
+    ss = read_sumstats(path)
+    assert ss.beta.tolist() == [math.log(1.3)]
+    assert ss.se[0] > 0
+
+
+def test_fastgwa_frequency_and_neale_numeric_sex_chromosome(tmp_path, jit):
+    fastgwa = _write(tmp_path, "CHR SNP POS A1 A2 N AF1 BETA SE P\n"
+                     "1 rs1 10 A C 2000 0.27 0.1 0.01 1e-4\n")
+    assert read_sumstats(fastgwa).eaf.tolist() == [0.27]
+    neale = _write(tmp_path, "variant beta se n\nchr01:10:C:A 1 1 2000\n"
+                  "23:200:C:T 1 1 2000\n", name="neale.tsv")
+    ss = read_sumstats(neale)
+    assert ss.chrom.tolist() == ["1", "X"]
+    assert ss.pos.tolist() == [10, 200]
+
+
 def test_case_control_columns_give_effective_n(tmp_path, jit):
     path = _write(tmp_path,
                   "SNP\tA1\tA2\tBETA\tSE\tN\tN_CASES\tN_CONTROLS\n"

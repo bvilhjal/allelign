@@ -35,6 +35,9 @@ jobs:
           - python-version: "3.12"
             extras: "test,fast"
             pins: ""
+          - python-version: "3.14"
+            extras: "test,fast"
+            pins: ""
     name: py${{ matrix.python-version }} · ${{ matrix.extras }}
     steps:
       - uses: actions/checkout@v4

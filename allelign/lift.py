@@ -27,6 +27,7 @@ import numpy as np
 
 from . import download as _dl
 from .alleles import normalize_chrom, reverse_complement
+from .weights import ScoringFile
 from .build import normalize_build
 
 __all__ = ["CHAIN_FILES", "Chain", "fetch_chain", "read_chain", "load_chain",
@@ -202,14 +203,19 @@ def lift_positions(chain, chrom, pos):
     return out_chrom, out_pos, reverse, mapped
 
 
-def _reverse_complemented(alleles, reverse):
+def _reverse_complemented(alleles, reverse, *, alternatives=False):
     """``alleles`` with the ``reverse`` rows reverse-complemented (non-ACGT kept)."""
-    alleles = np.asarray(alleles).astype(str)
-    out = alleles.copy()
+    out = np.array(alleles, dtype=object, copy=True)
     if reverse.any():
-        flipped = alleles[reverse]
+        flipped = out[reverse]
         values, inverse = np.unique(flipped, return_inverse=True)
-        mapped = np.array([reverse_complement(v) or v for v in values])
+        def complement(value):
+            if alternatives and "/" in value:
+                parts = [reverse_complement(part.strip()) for part in value.split("/")]
+                return "/".join(parts) if all(parts) else value
+            return reverse_complement(value) or value
+
+        mapped = np.array([complement(v) for v in values], dtype=object)
         out[reverse] = mapped[inverse]
     return out
 
@@ -230,13 +236,14 @@ def liftover(sumstats, source, target, *, chain=None, cache=None, opener=None):
     has_coordinates = (pos > 0) & (_normalized(sumstats.chrom) != "")
     new_chrom, new_pos, reverse, mapped = lift_positions(chain, sumstats.chrom, pos)
     unmapped = has_coordinates & ~mapped
-    chrom = np.where(has_coordinates, new_chrom, "").astype(str)
-    ids = np.asarray(sumstats.id).astype(str).copy()
+    ids = np.array(sumstats.id, dtype=object, copy=True)
     ids[unmapped] = ""
-    lifted = replace(sumstats, id=ids, chrom=chrom,
-                     pos=np.where(has_coordinates, new_pos, 0),
+    score_alleles = (isinstance(sumstats, ScoringFile)
+                     or getattr(sumstats, "incomplete_other_allele", None) is not None)
+    lifted = replace(sumstats, id=ids, chrom=new_chrom, pos=new_pos,
                      ea=_reverse_complemented(sumstats.ea, reverse),
-                     oa=_reverse_complemented(sumstats.oa, reverse))
+                     oa=_reverse_complemented(sumstats.oa, reverse,
+                                             alternatives=score_alleles))
     log = {"source": source, "target": target, "n_rows": int(pos.size),
            "n_lifted": int(mapped.sum()), "n_reverse_strand": int(reverse.sum()),
            "n_unmapped": int(unmapped.sum()),

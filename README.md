@@ -4,9 +4,9 @@
 
 Read, align and quality-control GWAS summary statistics and PGS effect sizes.
 
-Every method in this family starts the same way: parse a summary-statistics file in one of many dialects, get the effect alleles right against a reference, and catch bad input before it turns into a confident wrong number. allelign does those steps once, for all of them. It is extracted from ldpred3, plus the PGS Catalog reader from multipgs and the long-range LD table from bipred. On the inputs ldpred3 already handles it reproduces ldpred3 bit for bit; `tests/test_parity_ldpred3.py` checks that.
+Every method in this family starts the same way: parse a summary-statistics file in one of many dialects, get the effect alleles right against a reference, and catch bad input before it turns into a confident wrong number. allelign does those steps once, for all of them. It is extracted from ldpred3, plus the PGS Catalog reader from multipgs and the long-range LD table from bipred. The consumer tests verify that ldpred3's imports resolve to the corresponding allelign functions.
 
-NumPy is the only dependency. Numba speeds up the parser about threefold, and SciPy provides float32 eigensolves for the LD screen; both are optional (`[fast]`).
+NumPy is the only dependency. Optional extras (`[fast]`) provide Numba for faster parsing of large files and SciPy for float32 eigensolves in the LD screen.
 
 ## Install
 
@@ -119,5 +119,5 @@ Parts of the code and documentation were generated with AI assistance and review
 
 ## Status
 
-Version 0.3.1. MIT licence. If you use allelign, please cite it — see
+Version 0.3.2. MIT licence. If you use allelign, please cite it — see
 [CITATION.cff](CITATION.cff).
