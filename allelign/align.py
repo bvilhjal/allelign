@@ -1103,12 +1103,13 @@ def coverage_message(coverage, *, label="sumstats", n_invalid=0,
             "A fit on this few reference variants is not a genome-wide "
             "analysis of that reference: the LD blocks are nearly empty, the "
             "LD-consistency screen leaves most windows below its minimum "
-            "size, and LDSC keeps the full reference M, so h2 and "
-            "polygenicity are on a denominator the data do not populate.")
+            "size, and h2 and polygenicity estimated from them do not "
+            "describe the whole reference.")
     else:
         lines.append(
-            "LDSC keeps the full reference M and the LD blocks stay sparse, "
-            "so h2, polygenicity, and screen coverage are all affected.")
+            "The LD blocks stay sparse, so h2 and polygenicity estimated "
+            "from them do not describe the whole reference, and the "
+            "LD-consistency screen covers less of it.")
     if reason == "build_mismatch" or coverage.get("build_mismatch_suspected"):
         held = (coverage["n_unmatched_rows"]
                 - coverage.get("n_unmatched_id_absent", 0)

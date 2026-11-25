@@ -4,6 +4,14 @@ All notable changes are recorded here, in [Keep a Changelog](https://keepachange
 
 ## [Unreleased]
 
+### Fixed
+
+- The low-coverage alignment warning no longer says that LDSC keeps the full
+  reference M, which depends on the consumer (ldpred3 0.10.7 and later scores
+  the fitted variants with M set to their count). It now states that h2 and
+  polygenicity estimated from the covered variants do not describe the whole
+  reference.
+
 ## [0.3.2] - 2026-11-20
 
 ### Added

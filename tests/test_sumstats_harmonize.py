@@ -904,9 +904,9 @@ def _coverage_fixture(n=500):
 def test_reference_coverage_names_the_cause_of_a_thin_alignment():
     """Low coverage still produces numbers, so it has to be diagnosed.
 
-    LDSC keeps the full reference M whatever fraction of it the rows populate,
-    so a fit on a sparse corner of the reference reports h2 on a denominator
-    the data do not fill. The reason vocabulary is shared with bipred, so a
+    A fit on a sparse corner of the reference reports h2 and polygenicity
+    that do not describe the whole reference. The reason vocabulary is shared
+    with bipred, so a
     CLI run and a SMARTpred run reach the same verdict on the same input.
     """
     from allelign.align import (coverage_message, harmonize,
