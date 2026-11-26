@@ -72,7 +72,6 @@ REEXPORTS = [  # (ldpred3 module, its name, allelign module, allelign name)
     ("weights", "WeightsTable", "weights", "WeightsTable"),
     ("weights", "PGS_BUILDS", "weights", "PGS_BUILDS"),
     ("_qc_status", "QC_REASON_NAMES", "status", "QC_REASON_NAMES"),
-    ("_qc_status", "QC_OUT_HEADER", "status", "STATUS_HEADER"),
     ("_qc_status", "qc_status_counts", "status", "status_counts"),
     ("_qc_status", "write_qc_status_table", "status", "write_status_table"),
 ]
